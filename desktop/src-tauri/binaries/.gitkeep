@@ -1,0 +1,7 @@
+# This folder contains the backend sidecar binary
+# Built by backend/build.py and copied here automatically
+# The binary is platform-specific:
+# - aicap-backend-x86_64-pc-windows-msvc.exe (Windows)
+# - aicap-backend-x86_64-apple-darwin (macOS Intel)
+# - aicap-backend-aarch64-apple-darwin (macOS ARM)
+# - aicap-backend-x86_64-unknown-linux-gnu (Linux)

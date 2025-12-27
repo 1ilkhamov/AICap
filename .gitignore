@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+
+# Tauri
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Cache
+.cache/
+
+# Credentials (safety net)
+*.pem
+*.key
+*.p12
+*.pfx
+tokens.enc
+*.sqlite
+*.db
