@@ -29,6 +29,9 @@ Thumbs.db
 # Cache
 .cache/
 
+# Documentation (local only)
+versions/
+
 # Credentials (safety net)
 *.pem
 *.key

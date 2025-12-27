@@ -76,12 +76,27 @@ jobs:
         platform: [windows-latest]
     
     runs-on: ${{ matrix.platform }}
-    defaults:
-      run:
-        working-directory: desktop
     
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+      
+      - name: Build backend executable
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          python build.py
+      
+      - name: Verify backend binary exists
+        run: |
+          ls -la desktop/src-tauri/binaries/
+        shell: bash
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -98,10 +113,13 @@ jobs:
         with:
           workspaces: desktop/src-tauri
       
-      - name: Install dependencies
+      - name: Install frontend dependencies
+        working-directory: desktop
         run: npm ci
       
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
