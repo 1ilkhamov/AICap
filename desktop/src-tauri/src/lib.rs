@@ -3,7 +3,8 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, Runtime, WindowEvent,
 };
-use tauri::process::Command;
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::CommandChild;
 use std::sync::Mutex;
 
 // API base URL - can be overridden via environment variable
@@ -15,7 +16,7 @@ fn get_api_base() -> String {
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 // Backend process handle
-static BACKEND_PROCESS: OnceLock<Mutex<Option<tauri::process::CommandChild>>> = OnceLock::new();
+static BACKEND_PROCESS: OnceLock<Mutex<Option<CommandChild>>> = OnceLock::new();
 
 fn get_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
@@ -30,7 +31,7 @@ fn get_client() -> &'static reqwest::Client {
 
 fn start_backend(app: &tauri::AppHandle) -> Result<(), String> {
     let backend_guard = BACKEND_PROCESS.get_or_init(|| Mutex::new(None));
-    let mut backend = backend_guard.lock().map_err(|e| e.to_string())?;
+    let mut backend = backend_guard.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
     
     // Already running
     if backend.is_some() {
@@ -64,7 +65,7 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), String> {
 fn stop_backend() {
     if let Some(backend_guard) = BACKEND_PROCESS.get() {
         if let Ok(mut backend) = backend_guard.lock() {
-            if let Some(child) = backend.take() {
+            if let Some(mut child) = backend.take() {
                 // Give backend time for graceful shutdown
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 let _ = child.kill();
