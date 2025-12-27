@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -164,7 +164,6 @@ class StatusResponse(BaseModel):
 
 
 # ===== API v1 Router =====
-from fastapi import APIRouter
 api_v1 = APIRouter(prefix="/api/v1")
 
 

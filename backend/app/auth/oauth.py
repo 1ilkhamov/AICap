@@ -223,7 +223,7 @@ class OpenAIOAuth:
             if response.status_code == 200:
                 break
             elif response.status_code >= 500 and attempt < max_retries - 1:
-                logger.warning(f"Server error on refresh, retrying...")
+                logger.warning("Server error on refresh, retrying...")
                 await asyncio.sleep(1 * (attempt + 1))
                 continue
             else:
