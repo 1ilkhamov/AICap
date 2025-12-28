@@ -1,6 +1,6 @@
 [package]
 name = "aicap"
-version = "1.1.0"
+version = "1.1.1"
 description = "AICap - Track your AI service usage limits"
 authors = ["AICap Team"]
 edition = "2021"

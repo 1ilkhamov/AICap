@@ -6,6 +6,25 @@
 
 ## English
 
+### [1.1.1] - 2024-12-28
+
+#### Security Fixes
+- Fixed missing `request` parameter in legacy login endpoint (critical bug)
+- Removed debug logging of OAuth state tokens
+- Fixed race condition in rate limit cleanup function
+- Fixed HMAC verification timing issue in state manager
+
+#### Bug Fixes
+- Legacy endpoint `/auth/{provider}/login` now correctly passes request parameter
+- Rate limit cleanup now properly logs both general and auth counters
+- Deleting active account is now blocked at UI level
+- Account dropdown no longer creates duplicates on rapid clicks
+
+#### Improvements
+- Centralized app version in `config.py` (backend) and Tauri API (frontend)
+- Added return type annotations for `get_all_limits()` and `refresh_limits()`
+- Improved UI sync with backend on account deletion errors
+
 ### [1.1.0] - 2024-12-28
 
 #### Added
@@ -41,6 +60,25 @@
 ---
 
 ## Русский
+
+### [1.1.1] - 2024-12-28
+
+#### Исправления безопасности
+- Исправлен отсутствующий параметр `request` в legacy login endpoint (критический баг)
+- Удалено debug логирование OAuth state токенов
+- Исправлена race condition в функции очистки rate limit
+- Исправлена проблема HMAC верификации в state manager
+
+#### Исправления багов
+- Legacy endpoint `/auth/{provider}/login` теперь корректно передаёт параметр request
+- Очистка rate limit теперь правильно логирует оба счётчика (general и auth)
+- Удаление активного аккаунта теперь блокируется на уровне UI
+- Dropdown аккаунтов больше не создаёт дубликаты при быстрых кликах
+
+#### Улучшения
+- Версия приложения централизована в `config.py` (backend) и Tauri API (frontend)
+- Добавлены аннотации типов для `get_all_limits()` и `refresh_limits()`
+- Улучшена синхронизация UI с backend при ошибках удаления аккаунта
 
 ### [1.1.0] - 2024-12-28
 

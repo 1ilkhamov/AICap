@@ -19,6 +19,7 @@ from .providers.openai_codex import OpenAICodexProvider, UsageLimits
 from .auth.credentials import CredentialManager
 from .auth.state_manager import oauth_state_manager
 from .config import (
+    VERSION,
     UPDATE_INTERVAL_MINUTES,
     CORS_ORIGINS,
     RATE_LIMIT_REQUESTS,
@@ -76,25 +77,29 @@ def check_auth_rate_limit(client_ip: str) -> bool:
 def cleanup_rate_limit_storage() -> None:
     """Periodic cleanup of rate limit storage to prevent memory leaks."""
     now = time.time()
+    expired_general = 0
+    expired_auth = 0
     
     with _rate_limit_lock:
-        expired_ips = [
+        expired_ips_general = [
             ip for ip, timestamps in rate_limit_storage.items()
             if not timestamps or max(timestamps) < now - RATE_LIMIT_WINDOW * 2
         ]
-        for ip in expired_ips:
+        for ip in expired_ips_general:
             del rate_limit_storage[ip]
+        expired_general = len(expired_ips_general)
     
     with _auth_rate_limit_lock:
-        expired_ips = [
+        expired_ips_auth = [
             ip for ip, timestamps in auth_rate_limit_storage.items()
             if not timestamps or max(timestamps) < now - AUTH_RATE_LIMIT_WINDOW * 2
         ]
-        for ip in expired_ips:
+        for ip in expired_ips_auth:
             del auth_rate_limit_storage[ip]
+        expired_auth = len(expired_ips_auth)
     
-    if expired_ips:
-        logger.debug(f"Cleaned up rate limit entries for {len(expired_ips)} IPs")
+    if expired_general or expired_auth:
+        logger.debug(f"Cleaned up rate limit entries: {expired_general} general, {expired_auth} auth")
 
 
 async def update_all_limits():
@@ -127,7 +132,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AICap",
     description="Track API usage limits for AI services like OpenAI Codex",
-    version="1.1.0",
+    version=VERSION,
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -178,7 +183,7 @@ async def get_status():
 
 
 @api_v1.get("/limits", tags=["limits"])
-async def get_all_limits():
+async def get_all_limits() -> dict:
     """Get usage limits for all authenticated providers."""
     return {
         "last_update": last_update.isoformat() if last_update else None,
@@ -199,7 +204,7 @@ async def get_provider_limits(provider: str):
 
 
 @api_v1.post("/limits/refresh", tags=["limits"])
-async def refresh_limits():
+async def refresh_limits() -> dict:
     """Force refresh limits for all authenticated providers."""
     await update_all_limits()
     return {"status": "ok", "last_update": last_update.isoformat() if last_update else None}
@@ -277,8 +282,9 @@ app.include_router(api_v1)
 
 # ===== Root endpoints =====
 @app.get("/")
-async def root():
-    return {"status": "ok", "service": "aicap", "version": "1.1.0"}
+async def root() -> dict:
+    """Root endpoint with service info."""
+    return {"status": "ok", "service": "aicap", "version": VERSION}
 
 
 @app.get("/health", tags=["status"])
@@ -313,7 +319,7 @@ async def health_check():
         "status": "healthy" if all_healthy else "degraded",
         "checks": checks,
         "last_update": last_update.isoformat() if last_update else None,
-        "version": "1.1.0",
+        "version": VERSION,
     }
 
 
@@ -421,8 +427,9 @@ async def refresh_limits_legacy():
 
 
 @app.get("/auth/{provider}/login", deprecated=True)
-async def login_legacy(provider: str, open_browser: bool = Query(default=True)):
-    return await login(provider, open_browser)
+async def login_legacy(request: Request, provider: str, open_browser: bool = Query(default=True)):
+    """Legacy login endpoint - use /api/v1/auth/{provider}/login instead."""
+    return await login(request=request, provider=provider, open_browser=open_browser, add_account=False)
 
 
 @app.post("/auth/{provider}/logout", deprecated=True)

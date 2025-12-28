@@ -111,7 +111,7 @@ class OpenAIOAuth:
     
     async def exchange_code(self, code: str, state: str) -> Optional[TokenData]:
         """Exchange authorization code for tokens with proper state validation."""
-        logger.debug(f"Exchange code called with state={state[:16]}...")
+        logger.debug("Exchange code called")
         
         # Validate state using secure state manager
         state_data = oauth_state_manager.validate_state(state)

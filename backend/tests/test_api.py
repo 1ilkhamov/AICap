@@ -159,3 +159,50 @@ class TestCleanupJobs:
         with _rate_limit_lock:
             assert "old_ip" not in rate_limit_storage
             assert "new_ip" in rate_limit_storage
+
+
+class TestMultiAccount:
+    """Test multi-account management endpoints."""
+    
+    def test_get_accounts(self, client):
+        """Test getting accounts list."""
+        response = client.get("/api/v1/accounts")
+        assert response.status_code == 200
+        data = response.json()
+        assert "accounts" in data
+        assert isinstance(data["accounts"], list)
+    
+    def test_get_accounts_by_provider(self, client):
+        """Test getting accounts filtered by provider."""
+        response = client.get("/api/v1/accounts?provider=openai")
+        assert response.status_code == 200
+        data = response.json()
+        assert "accounts" in data
+    
+    def test_activate_nonexistent_account(self, client):
+        """Test activating non-existent account."""
+        response = client.post("/api/v1/accounts/nonexistent123/activate")
+        assert response.status_code == 200
+        data = response.json()
+        # Should return error status for non-existent account
+        assert data.get("status") == "error"
+    
+    def test_update_account_name_validation(self, client):
+        """Test account name update with validation."""
+        # Test with empty name - should fail validation
+        response = client.put("/api/v1/accounts/test-id/name?name=")
+        assert response.status_code == 422  # Validation error
+        
+        # Test with too long name - should fail validation  
+        long_name = "x" * 51
+        response = client.put(f"/api/v1/accounts/test-id/name?name={long_name}")
+        assert response.status_code == 422
+    
+    def test_delete_nonexistent_account(self, client):
+        """Test deleting non-existent account."""
+        response = client.delete("/api/v1/accounts/nonexistent123")
+        assert response.status_code == 200
+        data = response.json()
+        # Should return error status for non-existent account
+        assert data.get("status") == "error"
+

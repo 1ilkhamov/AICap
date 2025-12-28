@@ -13,6 +13,9 @@ env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
     load_dotenv(env_path)
 
+# ===== Application Version =====
+VERSION = "1.1.1"
+
 # ===== Logging Configuration =====
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FORMAT = os.getenv("LOG_FORMAT", "text")  # "text" or "json"

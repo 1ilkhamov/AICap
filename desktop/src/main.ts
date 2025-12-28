@@ -1,7 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { t, getLocale, setLocale, getAvailableLocales, Locale } from "./i18n";
 import "./styles.css";
+
+// App version (loaded from tauri.conf.json)
+let appVersion = "1.1.0"; // fallback
+getVersion().then(v => appVersion = v).catch(() => {});
 
 // SVG Icons
 const icons = {
@@ -102,7 +107,7 @@ function isCacheStale(timestamp: number): boolean {
 function setButtonLoading(btnId: string, loading: boolean, loadingText?: string): void {
   const btn = document.getElementById(btnId) as HTMLButtonElement | null;
   if (!btn) return;
-  
+
   if (loading) {
     btn.classList.add('loading');
     btn.setAttribute('disabled', 'true');
@@ -143,15 +148,15 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 function showToast(message: string, type: 'success' | 'error' | 'info' = 'success'): void {
   const existing = document.querySelector('.toast');
   if (existing) existing.remove();
-  
+
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   toast.innerHTML = `<span>${message}</span>`;
   document.body.appendChild(toast);
-  
+
   // Trigger animation
   requestAnimationFrame(() => toast.classList.add('show'));
-  
+
   setTimeout(() => {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
@@ -174,16 +179,16 @@ function showConfirmDialog(title: string, message: string): Promise<boolean> {
       </div>
     `;
     document.body.appendChild(overlay);
-    
+
     // Trigger animation
     requestAnimationFrame(() => overlay.classList.add('show'));
-    
+
     const close = (result: boolean) => {
       overlay.classList.remove('show');
       setTimeout(() => overlay.remove(), 200);
       resolve(result);
     };
-    
+
     overlay.querySelector('.dialog-btn-cancel')?.addEventListener('click', () => close(false));
     overlay.querySelector('.dialog-btn-confirm')?.addEventListener('click', () => close(true));
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
@@ -205,57 +210,57 @@ async function checkAndNotify(data: LimitsData): Promise<void> {
     console.debug("Notifications disabled, skipping");
     return;
   }
-  
+
   const primaryPercent = data.primary_used_percent ?? 0;
   const secondaryPercent = data.secondary_used_percent ?? 0;
-  
+
   const shouldNotifyPrimary = primaryPercent >= NOTIFICATION_THRESHOLD && !lastNotifiedPrimary;
   const shouldNotifySecondary = secondaryPercent >= NOTIFICATION_THRESHOLD && !lastNotifiedSecondary;
-  
+
   // Reset notification flags when usage drops below threshold
   if (primaryPercent < NOTIFICATION_THRESHOLD) lastNotifiedPrimary = false;
   if (secondaryPercent < NOTIFICATION_THRESHOLD) lastNotifiedSecondary = false;
-  
+
   if (!shouldNotifyPrimary && !shouldNotifySecondary) {
     return;
   }
-  
+
   try {
     // Check and request permission
     let permissionGranted = await isPermissionGranted();
     console.debug("Notification permission status:", permissionGranted);
-    
+
     if (!permissionGranted) {
       console.debug("Requesting notification permission...");
       const permission = await requestPermission();
       permissionGranted = permission === "granted";
       console.debug("Permission request result:", permission);
     }
-    
+
     if (!permissionGranted) {
       console.warn("Notification permission denied");
       return;
     }
-    
+
     // Send notifications
     if (shouldNotifyPrimary) {
       console.debug("Sending primary usage notification:", primaryPercent);
-      await sendNotification({ 
-        title: t('highUsageAlert'), 
-        body: `${t('fiveHourUsage')} ${primaryPercent.toFixed(0)}%` 
+      await sendNotification({
+        title: t('highUsageAlert'),
+        body: `${t('fiveHourUsage')} ${primaryPercent.toFixed(0)}%`
       });
       lastNotifiedPrimary = true;
     }
-    
+
     if (shouldNotifySecondary) {
       console.debug("Sending secondary usage notification:", secondaryPercent);
-      await sendNotification({ 
-        title: t('highUsageAlert'), 
-        body: `${t('weeklyUsage')} ${secondaryPercent.toFixed(0)}%` 
+      await sendNotification({
+        title: t('highUsageAlert'),
+        body: `${t('weeklyUsage')} ${secondaryPercent.toFixed(0)}%`
       });
       lastNotifiedSecondary = true;
     }
-  } catch (e) { 
+  } catch (e) {
     console.error("Notification error:", e);
     // Show in-app toast as fallback
     if (shouldNotifyPrimary || shouldNotifySecondary) {
@@ -267,22 +272,22 @@ async function checkAndNotify(data: LimitsData): Promise<void> {
 
 // Autostart
 async function getAutostart(): Promise<boolean> {
-  try { 
+  try {
     const enabled = await invoke<boolean>("get_autostart_enabled");
     console.debug("Autostart status:", enabled);
     return enabled;
-  } catch (e) { 
+  } catch (e) {
     console.error("Failed to get autostart status:", e);
-    return false; 
+    return false;
   }
 }
 
 async function setAutostart(enabled: boolean): Promise<void> {
-  try { 
+  try {
     await invoke("set_autostart_enabled", { enabled });
     console.debug("Autostart set to:", enabled);
     showToast(t('settingsSaved'), 'success');
-  } catch (e) { 
+  } catch (e) {
     console.error("Autostart error:", e);
     showToast(t('fetchError'), 'error');
     // Revert toggle state on error
@@ -323,20 +328,20 @@ async function addAccount(): Promise<void> {
     const initialCount = accounts.length;
     setButtonLoading("addAccountBtn", true);
     await invoke("add_account_openai");
-    
+
     // Poll for new account with proper check
     let attempts = 0;
     const poll = async () => {
       attempts++;
       await fetchAccounts();
-      
+
       // Check if new account was added
       if (accounts.length > initialCount) {
         setButtonLoading("addAccountBtn", false);
         await refresh();
         return;
       }
-      
+
       if (attempts < 30) {
         setTimeout(poll, Math.min(2000 * Math.pow(1.2, attempts - 1), 5000));
       } else {
@@ -356,13 +361,13 @@ async function switchAccount(accountId: string): Promise<void> {
     const nameEl = document.querySelector('#accountSelector .account-name');
     const targetAcc = accounts.find(a => a.id === accountId);
     if (nameEl && targetAcc) nameEl.textContent = targetAcc.name;
-    
+
     // Mark as active locally for instant feedback
     accounts.forEach(a => a.is_active = a.id === accountId);
-    
+
     // Then do the actual switch in background
     await invoke("activate_account", { accountId });
-    
+
     // Refresh data in background (don't await to keep UI responsive)
     refresh();
   } catch (e) { console.error("Switch account error:", e); }
@@ -375,7 +380,7 @@ async function renameAccount(accountId: string, name: string): Promise<void> {
     showToast(t('fetchError'), 'error');
     return;
   }
-  
+
   try {
     await invoke("update_account_name", { accountId, name: trimmed });
     await fetchAccounts();
@@ -389,16 +394,27 @@ async function renameAccount(accountId: string, name: string): Promise<void> {
 }
 
 async function removeAccount(accountId: string): Promise<void> {
+  // Prevent deleting active account from UI
+  const targetAccount = accounts.find(a => a.id === accountId);
+  if (targetAccount?.is_active) {
+    showToast(t('fetchError'), 'error');
+    return;
+  }
+
   const confirmed = await showConfirmDialog(t('confirmDelete'), t('confirmDeleteDesc'));
   if (!confirmed) return;
-  
+
   try {
     await invoke("delete_account", { accountId });
-    await fetchAccounts();
+    // Update local state immediately for responsive UI
+    accounts = accounts.filter(a => a.id !== accountId);
     showToast(t('accountDeleted'), 'success');
+    // Refresh in background to sync with backend
     await refresh();
   } catch (e) {
     console.error("Delete account error:", e);
+    // Refresh accounts to ensure UI is in sync with backend
+    await fetchAccounts();
     showToast(t('fetchError'), 'error');
   }
 }
@@ -406,13 +422,13 @@ async function removeAccount(accountId: string): Promise<void> {
 
 async function refresh(): Promise<void> {
   if (isLoading) return;
-  
+
   setButtonLoading("refreshBtn", true);
   isLoading = true;
-  
+
   try {
     backendAvailable = await checkBackend();
-    
+
     if (!backendAvailable) {
       // Try to use cached data
       const cached = loadFromCache();
@@ -426,17 +442,17 @@ async function refresh(): Promise<void> {
       showBackendError();
       return;
     }
-    
+
     await fetchAccounts();
     const response = await withRetry(() => invoke<{ providers: { openai?: LimitsData } }>("fetch_limits"));
     limitsData = response.providers?.openai || null;
-    
+
     // Save to cache
     saveToCache(limitsData, accounts);
-    
+
     renderContent();
     updateLastUpdate(Date.now(), false);
-    
+
     if (limitsData?.is_authenticated) await checkAndNotify(limitsData);
   } catch (e) {
     console.error("Refresh error:", e);
@@ -458,7 +474,7 @@ async function refresh(): Promise<void> {
 
 async function login(): Promise<void> {
   setButtonLoading("loginBtn", true, t('openingBrowser'));
-  
+
   try {
     await invoke("login_openai");
     let attempts = 0;
@@ -510,12 +526,12 @@ function formatResetTime(isoString?: string): string | null {
 function renderContent(): void {
   const content = document.getElementById("content");
   if (!content) return;
-  
+
   if (settingsOpen) { renderSettings(content); return; }
   if (!backendAvailable) { content.innerHTML = renderBackendOffline(); return; }
   if (isLoading && !limitsData) { content.innerHTML = renderSkeleton(); return; }
   if (!limitsData || !limitsData.is_authenticated) { content.innerHTML = renderNotConnected(); return; }
-  
+
   content.innerHTML = renderConnected(limitsData);
 }
 
@@ -548,7 +564,7 @@ async function renderSettings(content: HTMLElement): Promise<void> {
   const autostartEnabled = await getAutostart();
   const currentLocale = getLocale();
   const locales = getAvailableLocales();
-  
+
   content.innerHTML = `
     <div class="card">
       <div class="card-header">
@@ -590,7 +606,7 @@ async function renderSettings(content: HTMLElement): Promise<void> {
           </select>
         </div>
       </div>
-      <div class="settings-footer"><span class="version">v1.1.0</span></div>
+      <div class="settings-footer"><span class="version">v${appVersion}</span></div>
     </div>
   `;
 }
@@ -640,14 +656,14 @@ function renderConnected(data: LimitsData): string {
   const secondaryPercent = data.secondary_used_percent ?? 0;
   const primaryClass = getUsageClass(primaryPercent);
   const secondaryClass = getUsageClass(secondaryPercent);
-  const planIcon = data.plan_type?.toLowerCase() === 'team' ? icons.users : 
-                   data.plan_type?.toLowerCase() === 'pro' ? icons.star : icons.crown;
-  
+  const planIcon = data.plan_type?.toLowerCase() === 'team' ? icons.users :
+    data.plan_type?.toLowerCase() === 'pro' ? icons.star : icons.crown;
+
   const activeAccount = accounts.find(a => a.is_active);
   const accountName = activeAccount?.name || t('account');
   const cardClass = isFirstRender ? 'card animated' : 'card';
   isFirstRender = false;
-  
+
   let html = `
     <div class="${cardClass}">
       <div class="card-header">
@@ -658,7 +674,7 @@ function renderConnected(data: LimitsData): string {
         <span class="status online">${t('connected')}</span>
       </div>
   `;
-  
+
   // Account selector
   html += `
     <div class="account-selector">
@@ -672,7 +688,7 @@ function renderConnected(data: LimitsData): string {
       </div>
     </div>
   `;
-  
+
   if (data.plan_type) {
     html += `
       <div class="plan-row">
@@ -684,7 +700,7 @@ function renderConnected(data: LimitsData): string {
       </div>
     `;
   }
-  
+
   // Primary usage
   html += `
     <div class="usage-block">
@@ -697,7 +713,7 @@ function renderConnected(data: LimitsData): string {
   const primaryReset = formatResetTime(data.primary_reset_at);
   if (primaryReset) html += `<div class="reset-time"><span class="reset-time-icon">${icons.clock}</span>${t('resetsIn')} <span class="reset-time-value">${primaryReset}</span></div>`;
   html += `</div><div class="divider"></div>`;
-  
+
   // Secondary usage
   html += `
     <div class="usage-block">
@@ -710,9 +726,9 @@ function renderConnected(data: LimitsData): string {
   const secondaryReset = formatResetTime(data.secondary_reset_at);
   if (secondaryReset) html += `<div class="reset-time"><span class="reset-time-icon">${icons.clock}</span>${t('resetsIn')} <span class="reset-time-value">${secondaryReset}</span></div>`;
   html += `</div>`;
-  
+
   if (data.error) html += `<div class="error-msg"><span>${icons.alert}</span><span>${data.error}</span></div>`;
-  
+
   html += `</div>`;
   return html;
 }
@@ -724,7 +740,7 @@ function renderAccountsDropdown(): string {
 
 function renderAccountsDropdownContent(): string {
   let html = '';
-  
+
   for (const acc of accounts) {
     if (editingAccountId === acc.id) {
       html += `
@@ -753,7 +769,7 @@ function renderAccountsDropdownContent(): string {
       `;
     }
   }
-  
+
   html += `
     <div class="dropdown-divider"></div>
     <div class="dropdown-item" id="addAccountBtn">
@@ -761,7 +777,7 @@ function renderAccountsDropdownContent(): string {
       <span>${t('addAccount')}</span>
     </div>
   `;
-  
+
   return html;
 }
 
@@ -802,28 +818,28 @@ function updateLastUpdate(timestamp: number = Date.now(), isStale: boolean = fal
 document.addEventListener("click", async (e) => {
   const target = e.target as HTMLElement;
   const btn = target.closest('button');
-  
+
   // Account selector toggle
   if (target.closest('#accountSelector')) {
     accountsExpanded = !accountsExpanded;
     const selector = document.querySelector('.account-selector');
-    const existingDropdown = selector?.querySelector('.account-dropdown');
-    
-    if (accountsExpanded && selector && !existingDropdown) {
+
+    // Remove all existing dropdowns first to prevent duplicates
+    document.querySelectorAll('.account-dropdown').forEach(d => d.remove());
+
+    if (accountsExpanded && selector) {
       selector.insertAdjacentHTML('beforeend', renderAccountsDropdown());
-    } else if (!accountsExpanded && existingDropdown) {
-      existingDropdown.remove();
     }
     return;
   }
-  
+
   // Click outside dropdown closes it
   if (accountsExpanded && !target.closest('.account-dropdown') && !target.closest('#accountSelector')) {
     accountsExpanded = false;
     document.querySelector('.account-dropdown')?.remove();
     return;
   }
-  
+
   // Account item click (switch account)
   const accountItem = target.closest('.account-item[data-account-id]') as HTMLElement;
   if (accountItem && !target.closest('.account-item-actions')) {
@@ -837,7 +853,7 @@ document.addEventListener("click", async (e) => {
     }
     return;
   }
-  
+
   // Edit account name
   const editBtn = target.closest('[data-edit-id]') as HTMLElement;
   if (editBtn) {
@@ -849,7 +865,7 @@ document.addEventListener("click", async (e) => {
     }
     return;
   }
-  
+
   // Save account name
   const saveBtn = target.closest('[data-save-id]') as HTMLElement;
   if (saveBtn) {
@@ -865,7 +881,7 @@ document.addEventListener("click", async (e) => {
     }
     return;
   }
-  
+
   // Cancel edit
   if (btn?.id === 'cancelEditBtn') {
     editingAccountId = null;
@@ -873,7 +889,7 @@ document.addEventListener("click", async (e) => {
     if (dropdown) dropdown.innerHTML = renderAccountsDropdownContent();
     return;
   }
-  
+
   // Delete account
   const deleteBtn = target.closest('[data-delete-id]') as HTMLElement;
   if (deleteBtn && deleteBtn.dataset.deleteId) {
@@ -882,7 +898,7 @@ document.addEventListener("click", async (e) => {
     if (dropdown) dropdown.innerHTML = renderAccountsDropdownContent();
     return;
   }
-  
+
   // Add account
   if (target.closest('#addAccountBtn')) {
     accountsExpanded = false;
@@ -890,7 +906,7 @@ document.addEventListener("click", async (e) => {
     await addAccount();
     return;
   }
-  
+
   // Other buttons
   if (!btn) return;
   if (btn.id === "loginBtn" && !btn.hasAttribute("disabled")) login();
@@ -936,7 +952,7 @@ function startAutoRefresh(): void {
     clearInterval(refreshInterval);
     refreshInterval = null;
   }
-  
+
   if (autoRefreshEnabled && isWindowVisible) {
     refreshInterval = setInterval(() => {
       if (isWindowVisible && autoRefreshEnabled) {
@@ -956,7 +972,7 @@ function stopAutoRefresh(): void {
 // Handle window visibility changes
 document.addEventListener("visibilitychange", () => {
   isWindowVisible = document.visibilityState === "visible";
-  
+
   if (isWindowVisible) {
     // Window became visible - refresh data and restart auto-refresh
     refresh();

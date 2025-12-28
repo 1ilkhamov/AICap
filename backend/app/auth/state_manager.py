@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class StateData:
     """OAuth state data."""
     state: str
-    created_at: float
+    created_at: int  # Unix timestamp as int for consistent HMAC verification
     add_new_account: bool
     nonce: str
 
@@ -59,12 +59,12 @@ class OAuthStateManager:
             
             self._pending_states[state] = StateData(
                 state=state,
-                created_at=time.time(),
+                created_at=int(time.time()),  # Store as int for consistent HMAC verification
                 add_new_account=add_new_account,
                 nonce=nonce
             )
         
-        logger.debug(f"Created OAuth state: {state[:16]}...")
+        logger.debug("Created new OAuth state")
         return state
     
     def validate_state(self, state: str) -> Optional[StateData]:
@@ -77,19 +77,19 @@ class OAuthStateManager:
             # Check if state exists
             state_data = self._pending_states.get(state)
             if not state_data:
-                logger.warning(f"Unknown state: {state[:16]}...")
+                logger.warning("Unknown OAuth state received")
                 return None
             
             # Check expiration
             if time.time() - state_data.created_at > OAUTH_STATE_EXPIRATION:
-                logger.warning(f"Expired state: {state[:16]}...")
+                logger.warning("Expired OAuth state received")
                 del self._pending_states[state]
                 return None
         
         # Verify HMAC integrity (outside lock for performance)
         try:
             nonce, signature = state.split(':')
-            timestamp = str(int(state_data.created_at))
+            timestamp = str(state_data.created_at)  # Already int, consistent with creation
             message = f"{nonce}:{timestamp}".encode()
             expected_sig = hmac.new(self._secret, message, hashlib.sha256).hexdigest()[:16]
             
@@ -107,7 +107,7 @@ class OAuthStateManager:
         with self._lock:
             if state in self._pending_states:
                 del self._pending_states[state]
-                logger.debug(f"Consumed state: {state[:16]}...")
+                logger.debug("OAuth state consumed successfully")
                 return True
         return False
     
