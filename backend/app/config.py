@@ -109,7 +109,7 @@ RATE_LIMIT_REQUESTS = 60  # requests per minute
 RATE_LIMIT_WINDOW = 60  # seconds
 
 # Auth endpoints have stricter limits
-AUTH_RATE_LIMIT_REQUESTS = 5  # requests per minute
+AUTH_RATE_LIMIT_REQUESTS = 15  # requests per window
 AUTH_RATE_LIMIT_WINDOW = 60  # seconds
 
 # ===== Credential Storage =====
