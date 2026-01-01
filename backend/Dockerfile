@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
 COPY app/ ./app/
+COPY run_server.py .
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
@@ -17,12 +18,14 @@ USER appuser
 # Environment
 ENV PYTHONUNBUFFERED=1
 ENV LOG_LEVEL=INFO
+ENV API_HOST=0.0.0.0
+ENV API_PORT=1455
 
 EXPOSE 1455
 
-# Health check
+# Health check (uses API_PORT env var)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD python -c "import httpx; httpx.get('http://localhost:1455/health')" || exit 1
+  CMD python -c "import os; import httpx; httpx.get(f'http://localhost:{os.environ.get(\"API_PORT\", 1455)}/health')" || exit 1
 
-# Use 127.0.0.1 by default for security; override with API_HOST env var if needed
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "1455"]
+# Use run_server.py to ensure validate_host_security is called at startup
+CMD ["python", "run_server.py"]

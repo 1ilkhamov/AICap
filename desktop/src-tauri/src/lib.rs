@@ -6,21 +6,103 @@ use tauri::{
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandChild;
 use std::sync::Mutex;
+use rand::RngCore;
+use regex::Regex;
+
+const DEFAULT_API_URL: &str = "http://127.0.0.1:1455";
 
 // API base URL - can be overridden via environment variable
+fn is_allowed_release_url(url: &str) -> bool {
+    const LOCALHOST_PREFIX: &str = "http://localhost:";
+    const LOOPBACK_PREFIX: &str = "http://127.0.0.1:";
+    let port_str = if let Some(rest) = url.strip_prefix(LOCALHOST_PREFIX) {
+        rest
+    } else if let Some(rest) = url.strip_prefix(LOOPBACK_PREFIX) {
+        rest
+    } else {
+        return false;
+    };
+
+    if port_str.is_empty() || !port_str.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+
+    match port_str.parse::<u16>() {
+        Ok(port) if port != 0 => true,
+        _ => false,
+    }
+}
+
 fn get_api_base() -> String {
-    std::env::var("AICAP_API_URL").unwrap_or_else(|_| "http://127.0.0.1:1455".to_string())
+    let default = DEFAULT_API_URL.to_string();
+    let Ok(override_url) = std::env::var("AICAP_API_URL") else {
+        return default;
+    };
+
+    if cfg!(debug_assertions) {
+        return override_url;
+    }
+
+    if is_allowed_release_url(&override_url) {
+        override_url
+    } else {
+        default
+    }
+}
+
+// Per-launch API token shared with backend
+static API_TOKEN: OnceLock<String> = OnceLock::new();
+
+fn generate_api_token() -> String {
+    let mut bytes = [0u8; 32];
+    let mut rng = rand::rngs::OsRng;
+    rng.fill_bytes(&mut bytes);
+
+    let mut token = String::with_capacity(64);
+    for byte in bytes {
+        use std::fmt::Write;
+        write!(&mut token, "{:02x}", byte).expect("Failed to encode API token");
+    }
+    token
+}
+
+fn get_api_token() -> &'static str {
+    API_TOKEN.get_or_init(generate_api_token).as_str()
 }
 
 // Reusable HTTP client with proper configuration
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+// Compiled regex for account_id validation (8 lowercase hex chars)
+static ACCOUNT_ID_REGEX: OnceLock<Regex> = OnceLock::new();
+
 // Backend process handle
 static BACKEND_PROCESS: OnceLock<Mutex<Option<CommandChild>>> = OnceLock::new();
 
+/// Validates that account_id matches expected format: exactly 8 lowercase hex characters.
+/// This matches the backend's uuid.uuid4()[:8] format used in credentials.py.
+fn validate_account_id(account_id: &str) -> Result<(), String> {
+    let re = ACCOUNT_ID_REGEX.get_or_init(|| {
+        Regex::new(r"^[0-9a-f]{8}$").expect("Invalid regex pattern")
+    });
+    if re.is_match(account_id) {
+        Ok(())
+    } else {
+        Err(format!("Invalid account_id format: expected 8 lowercase hex characters, got '{}'", account_id))
+    }
+}
+
 fn get_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
+        let mut headers = reqwest::header::HeaderMap::new();
+        let token = get_api_token();
+        headers.insert(
+            reqwest::header::HeaderName::from_static("x-aicap-token"),
+            reqwest::header::HeaderValue::from_str(token).expect("Invalid API token"),
+        );
+
         reqwest::Client::builder()
+            .default_headers(headers)
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(10))
             .pool_max_idle_per_host(2)
@@ -41,6 +123,7 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), String> {
     // Try to spawn the sidecar
     match app.shell().sidecar("aicap-backend") {
         Ok(cmd) => {
+            let cmd = cmd.env("AICAP_API_TOKEN", get_api_token());
             match cmd.spawn() {
                 Ok((_, child)) => {
                     *backend = Some(child);
@@ -65,7 +148,7 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), String> {
 fn stop_backend() {
     if let Some(backend_guard) = BACKEND_PROCESS.get() {
         if let Ok(mut backend) = backend_guard.lock() {
-            if let Some(mut child) = backend.take() {
+            if let Some(child) = backend.take() {
                 // Give backend time for graceful shutdown
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 let _ = child.kill();
@@ -107,10 +190,40 @@ async fn login_openai() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn login_antigravity() -> Result<(), String> {
+    let api_base = get_api_base();
+    let resp = get_client()
+        .get(format!("{}/api/v1/auth/antigravity/login", api_base))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Login failed: {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn add_account_openai() -> Result<(), String> {
     let api_base = get_api_base();
     let resp = get_client()
         .get(format!("{}/api/v1/auth/openai/login?add_account=true", api_base))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Add account failed: {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn add_account_antigravity() -> Result<(), String> {
+    let api_base = get_api_base();
+    let resp = get_client()
+        .get(format!("{}/api/v1/auth/antigravity/login?add_account=true", api_base))
         .send()
         .await
         .map_err(|e| format!("Network error: {}", e))?;
@@ -137,10 +250,29 @@ async fn logout_openai() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_accounts() -> Result<serde_json::Value, String> {
+async fn logout_antigravity() -> Result<(), String> {
     let api_base = get_api_base();
     let resp = get_client()
-        .get(format!("{}/api/v1/accounts?provider=openai", api_base))
+        .post(format!("{}/api/v1/auth/antigravity/logout", api_base))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Logout failed: {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_accounts(provider: Option<String>) -> Result<serde_json::Value, String> {
+    let api_base = get_api_base();
+    let url = match provider {
+        Some(p) => format!("{}/api/v1/accounts?provider={}", api_base, urlencoding::encode(&p)),
+        None => format!("{}/api/v1/accounts", api_base),
+    };
+    let resp = get_client()
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("Network error: {}", e))?;
@@ -154,6 +286,7 @@ async fn get_accounts() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 async fn activate_account(account_id: String) -> Result<(), String> {
+    validate_account_id(&account_id)?;
     let api_base = get_api_base();
     let resp = get_client()
         .post(format!("{}/api/v1/accounts/{}/activate", api_base, account_id))
@@ -169,6 +302,7 @@ async fn activate_account(account_id: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn update_account_name(account_id: String, name: String) -> Result<(), String> {
+    validate_account_id(&account_id)?;
     let api_base = get_api_base();
     let resp = get_client()
         .put(format!("{}/api/v1/accounts/{}/name?name={}", api_base, account_id, urlencoding::encode(&name)))
@@ -184,6 +318,7 @@ async fn update_account_name(account_id: String, name: String) -> Result<(), Str
 
 #[tauri::command]
 async fn delete_account(account_id: String) -> Result<(), String> {
+    validate_account_id(&account_id)?;
     let api_base = get_api_base();
     let resp = get_client()
         .delete(format!("{}/api/v1/accounts/{}", api_base, account_id))
@@ -306,8 +441,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fetch_limits,
             login_openai,
+            login_antigravity,
             add_account_openai,
+            add_account_antigravity,
             logout_openai,
+            logout_antigravity,
             get_accounts,
             activate_account,
             update_account_name,

@@ -32,6 +32,14 @@ const icons = {
   plus: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`,
   trash: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>`,
   chevronDown: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`,
+  // Google/Antigravity sparkle icon
+  sparkles: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M3 5h4"/><path d="M19 17v4"/><path d="M17 19h4"/></svg>`,
+  // Gemini model icon  
+  gemini: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="m4.93 19.07 2.83-2.83"/><path d="m16.24 7.76 2.83-2.83"/></svg>`,
+  // Claude icon
+  claude: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M2 12h2"/><path d="M20 12h2"/></svg>`,
+  // OpenAI icon
+  openai: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>`,
 };
 
 
@@ -45,7 +53,16 @@ interface LimitsData {
   primary_reset_at?: string;
   secondary_used_percent?: number;
   secondary_reset_at?: string;
+  models?: ModelQuota[];
   error?: string;
+}
+
+interface ModelQuota {
+  model_name: string;
+  display_name: string;
+  remaining_fraction: number;
+  used_percent: number;
+  reset_time?: string;
 }
 
 interface Account {
@@ -55,9 +72,12 @@ interface Account {
   is_active: boolean;
 }
 
+type Provider = 'openai' | 'antigravity';
+
 // State
-let limitsData: LimitsData | null = null;
+let limitsData: Record<Provider, LimitsData | null> = { openai: null, antigravity: null };
 let accounts: Account[] = [];
+let currentProvider: Provider = 'openai';
 let isLoading = false;
 let backendAvailable = false;
 let lastNotifiedPrimary = false;
@@ -76,17 +96,28 @@ const SETTINGS_KEY = 'aicap-settings';
 const CACHE_KEY = 'aicap-cache';
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
+const escapeHtml = (value: string): string => value
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/\"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
+const escapeAttr = (value: string): string => escapeHtml(value);
+
 // Cached data interface
+
 interface CachedData {
-  limits: LimitsData | null;
+  limits: Record<Provider, LimitsData | null>;
   accounts: Account[];
   timestamp: number;
+  currentProvider: Provider;
 }
 
 // Cache management
-function saveToCache(limits: LimitsData | null, accs: Account[]): void {
+function saveToCache(limits: Record<Provider, LimitsData | null>, accs: Account[]): void {
   try {
-    const data: CachedData = { limits, accounts: accs, timestamp: Date.now() };
+    const data: CachedData = { limits, accounts: accs, timestamp: Date.now(), currentProvider };
     localStorage.setItem(CACHE_KEY, JSON.stringify(data));
   } catch (e) { console.error("Cache save error:", e); }
 }
@@ -95,7 +126,12 @@ function loadFromCache(): CachedData | null {
   try {
     const cached = localStorage.getItem(CACHE_KEY);
     if (!cached) return null;
-    return JSON.parse(cached) as CachedData;
+    const data = JSON.parse(cached) as CachedData;
+    // Migration: old format had single limitsData
+    if (!data.limits || typeof data.limits !== 'object') {
+      return null;
+    }
+    return data;
   } catch { return null; }
 }
 
@@ -151,8 +187,11 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'succes
 
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<span>${message}</span>`;
+  const text = document.createElement('span');
+  text.textContent = message;
+  toast.appendChild(text);
   document.body.appendChild(toast);
+
 
   // Trigger animation
   requestAnimationFrame(() => toast.classList.add('show'));
@@ -168,16 +207,36 @@ function showConfirmDialog(title: string, message: string): Promise<boolean> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'dialog-overlay';
-    overlay.innerHTML = `
-      <div class="dialog">
-        <div class="dialog-title">${title}</div>
-        <div class="dialog-message">${message}</div>
-        <div class="dialog-actions">
-          <button class="dialog-btn dialog-btn-cancel">${t('cancel')}</button>
-          <button class="dialog-btn dialog-btn-confirm">${t('confirm')}</button>
-        </div>
-      </div>
-    `;
+
+    // Build dialog DOM safely without innerHTML for dynamic content
+    const dialog = document.createElement('div');
+    dialog.className = 'dialog';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = title;  // Safe: textContent escapes HTML
+
+    const messageEl = document.createElement('div');
+    messageEl.className = 'dialog-message';
+    messageEl.textContent = message;  // Safe: textContent escapes HTML
+
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'dialog-btn dialog-btn-cancel';
+    cancelBtn.textContent = t('cancel');
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'dialog-btn dialog-btn-confirm';
+    confirmBtn.textContent = t('confirm');
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    dialog.appendChild(titleEl);
+    dialog.appendChild(messageEl);
+    dialog.appendChild(actions);
+    overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
     // Trigger animation
@@ -189,8 +248,8 @@ function showConfirmDialog(title: string, message: string): Promise<boolean> {
       resolve(result);
     };
 
-    overlay.querySelector('.dialog-btn-cancel')?.addEventListener('click', () => close(false));
-    overlay.querySelector('.dialog-btn-confirm')?.addEventListener('click', () => close(true));
+    cancelBtn.addEventListener('click', () => close(false));
+    confirmBtn.addEventListener('click', () => close(true));
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
   });
 }
@@ -242,11 +301,13 @@ async function checkAndNotify(data: LimitsData): Promise<void> {
       return;
     }
 
+    const providerName = data.provider === 'antigravity' ? 'Antigravity' : 'OpenAI';
+
     // Send notifications
     if (shouldNotifyPrimary) {
       console.debug("Sending primary usage notification:", primaryPercent);
       await sendNotification({
-        title: t('highUsageAlert'),
+        title: `${providerName}: ${t('highUsageAlert')}`,
         body: `${t('fiveHourUsage')} ${primaryPercent.toFixed(0)}%`
       });
       lastNotifiedPrimary = true;
@@ -255,7 +316,7 @@ async function checkAndNotify(data: LimitsData): Promise<void> {
     if (shouldNotifySecondary) {
       console.debug("Sending secondary usage notification:", secondaryPercent);
       await sendNotification({
-        title: t('highUsageAlert'),
+        title: `${providerName}: ${t('highUsageAlert')}`,
         body: `${t('weeklyUsage')} ${secondaryPercent.toFixed(0)}%`
       });
       lastNotifiedSecondary = true;
@@ -315,7 +376,7 @@ async function checkBackend(): Promise<boolean> {
 // Account management
 async function fetchAccounts(): Promise<void> {
   try {
-    const response = await invoke<{ accounts: Account[] }>("get_accounts");
+    const response = await invoke<{ accounts: Account[] }>("get_accounts", { provider: currentProvider });
     accounts = response.accounts || [];
   } catch (e) {
     console.error("Fetch accounts error:", e);
@@ -327,7 +388,12 @@ async function addAccount(): Promise<void> {
   try {
     const initialCount = accounts.length;
     setButtonLoading("addAccountBtn", true);
-    await invoke("add_account_openai");
+    
+    if (currentProvider === 'antigravity') {
+      await invoke("add_account_antigravity");
+    } else {
+      await invoke("add_account_openai");
+    }
 
     // Poll for new account with proper check
     let attempts = 0;
@@ -435,6 +501,7 @@ async function refresh(): Promise<void> {
       if (cached && cached.limits) {
         limitsData = cached.limits;
         accounts = cached.accounts;
+        if (cached.currentProvider) currentProvider = cached.currentProvider;
         renderContent();
         updateLastUpdate(cached.timestamp, isCacheStale(cached.timestamp));
         return;
@@ -444,8 +511,15 @@ async function refresh(): Promise<void> {
     }
 
     await fetchAccounts();
-    const response = await withRetry(() => invoke<{ providers: { openai?: LimitsData } }>("fetch_limits"));
-    limitsData = response.providers?.openai || null;
+    const response = await withRetry(() => invoke<{ providers: Record<string, LimitsData> }>("fetch_limits"));
+    
+    // Update limits for all providers
+    if (response.providers?.openai) {
+      limitsData.openai = response.providers.openai;
+    }
+    if (response.providers?.antigravity) {
+      limitsData.antigravity = response.providers.antigravity;
+    }
 
     // Save to cache
     saveToCache(limitsData, accounts);
@@ -453,7 +527,8 @@ async function refresh(): Promise<void> {
     renderContent();
     updateLastUpdate(Date.now(), false);
 
-    if (limitsData?.is_authenticated) await checkAndNotify(limitsData);
+    const currentLimits = limitsData[currentProvider];
+    if (currentLimits?.is_authenticated) await checkAndNotify(currentLimits);
   } catch (e) {
     console.error("Refresh error:", e);
     // Try cached data on error
@@ -461,6 +536,7 @@ async function refresh(): Promise<void> {
     if (cached && cached.limits) {
       limitsData = cached.limits;
       accounts = cached.accounts;
+      if (cached.currentProvider) currentProvider = cached.currentProvider;
       renderContent();
       updateLastUpdate(cached.timestamp, isCacheStale(cached.timestamp));
     } else {
@@ -476,12 +552,18 @@ async function login(): Promise<void> {
   setButtonLoading("loginBtn", true, t('openingBrowser'));
 
   try {
-    await invoke("login_openai");
+    if (currentProvider === 'antigravity') {
+      await invoke("login_antigravity");
+    } else {
+      await invoke("login_openai");
+    }
+    
     let attempts = 0;
     const poll = async () => {
       attempts++;
       await refresh();
-      if (limitsData?.is_authenticated) {
+      const currentLimits = limitsData[currentProvider];
+      if (currentLimits?.is_authenticated) {
         setButtonLoading("loginBtn", false);
         return;
       }
@@ -497,11 +579,22 @@ async function login(): Promise<void> {
 
 async function logout(): Promise<void> {
   try {
-    await invoke("logout_openai");
-    limitsData = null;
+    if (currentProvider === 'antigravity') {
+      await invoke("logout_antigravity");
+    } else {
+      await invoke("logout_openai");
+    }
+    limitsData[currentProvider] = null;
     accounts = [];
     renderContent();
   } catch (e) { console.error("Logout error:", e); }
+}
+
+function switchProvider(provider: Provider): void {
+  if (provider === currentProvider) return;
+  currentProvider = provider;
+  // Fetch accounts for new provider
+  fetchAccounts().then(() => renderContent());
 }
 
 function getUsageClass(percent: number): string {
@@ -522,6 +615,30 @@ function formatResetTime(isoString?: string): string | null {
   return `${minutes}${t('minutes')}`;
 }
 
+function renderProviderTabs(): string {
+  const openaiActive = currentProvider === 'openai' ? 'active' : '';
+  const antigravityActive = currentProvider === 'antigravity' ? 'active' : '';
+  
+  // Show indicator if provider is authenticated
+  const openaiConnected = limitsData.openai?.is_authenticated ? '<span class="tab-indicator"></span>' : '';
+  const antigravityConnected = limitsData.antigravity?.is_authenticated ? '<span class="tab-indicator"></span>' : '';
+  
+  return `
+    <div class="provider-tabs">
+      <button class="provider-tab ${openaiActive}" data-provider="openai">
+        <span class="tab-icon openai">${icons.openai}</span>
+        <span>OpenAI</span>
+        ${openaiConnected}
+      </button>
+      <button class="provider-tab ${antigravityActive}" data-provider="antigravity">
+        <span class="tab-icon antigravity">${icons.sparkles}</span>
+        <span>Antigravity</span>
+        ${antigravityConnected}
+      </button>
+    </div>
+  `;
+}
+
 
 function renderContent(): void {
   const content = document.getElementById("content");
@@ -529,10 +646,12 @@ function renderContent(): void {
 
   if (settingsOpen) { renderSettings(content); return; }
   if (!backendAvailable) { content.innerHTML = renderBackendOffline(); return; }
-  if (isLoading && !limitsData) { content.innerHTML = renderSkeleton(); return; }
-  if (!limitsData || !limitsData.is_authenticated) { content.innerHTML = renderNotConnected(); return; }
+  
+  const currentLimits = limitsData[currentProvider];
+  if (isLoading && !currentLimits) { content.innerHTML = renderSkeleton(); return; }
+  if (!currentLimits || !currentLimits.is_authenticated) { content.innerHTML = renderNotConnected(); return; }
 
-  content.innerHTML = renderConnected(limitsData);
+  content.innerHTML = renderConnected(currentLimits);
 }
 
 function renderSkeleton(): string {
@@ -632,12 +751,18 @@ function renderBackendOffline(): string {
 }
 
 function renderNotConnected(): string {
+  const isAntigravity = currentProvider === 'antigravity';
+  const providerName = isAntigravity ? 'ANTIGRAVITY' : 'OPENAI CODEX';
+  const providerIcon = isAntigravity ? icons.sparkles : icons.openai;
+  const providerIconClass = isAntigravity ? 'antigravity' : 'openai';
+  
   return `
+    ${renderProviderTabs()}
     <div class="card">
       <div class="card-header">
         <div class="provider-info">
-          <div class="provider-icon">${icons.bot}</div>
-          <span class="provider-name">${t('openaiCodex').toUpperCase()}</span>
+          <div class="provider-icon ${providerIconClass}">${providerIcon}</div>
+          <span class="provider-name">${providerName}</span>
         </div>
         <span class="status offline">${t('offline')}</span>
       </div>
@@ -652,24 +777,24 @@ function renderNotConnected(): string {
 
 
 function renderConnected(data: LimitsData): string {
-  const primaryPercent = data.primary_used_percent ?? 0;
-  const secondaryPercent = data.secondary_used_percent ?? 0;
-  const primaryClass = getUsageClass(primaryPercent);
-  const secondaryClass = getUsageClass(secondaryPercent);
-  const planIcon = data.plan_type?.toLowerCase() === 'team' ? icons.users :
-    data.plan_type?.toLowerCase() === 'pro' ? icons.star : icons.crown;
-
+  const isAntigravity = currentProvider === 'antigravity';
+  const providerName = isAntigravity ? 'ANTIGRAVITY' : 'OPENAI CODEX';
+  const providerIcon = isAntigravity ? icons.sparkles : icons.openai;
+  const providerIconClass = isAntigravity ? 'antigravity' : 'openai';
+  
   const activeAccount = accounts.find(a => a.is_active);
   const accountName = activeAccount?.name || t('account');
+  const safeAccountName = escapeHtml(accountName);
   const cardClass = isFirstRender ? 'card animated' : 'card';
   isFirstRender = false;
 
   let html = `
+    ${renderProviderTabs()}
     <div class="${cardClass}">
       <div class="card-header">
         <div class="provider-info">
-          <div class="provider-icon">${icons.bot}</div>
-          <span class="provider-name">${t('openaiCodex').toUpperCase()}</span>
+          <div class="provider-icon ${providerIconClass}">${providerIcon}</div>
+          <span class="provider-name">${providerName}</span>
         </div>
         <span class="status online">${t('connected')}</span>
       </div>
@@ -682,12 +807,36 @@ function renderConnected(data: LimitsData): string {
         <div class="account-icon">${icons.user}</div>
         <div class="account-info">
           <span class="account-label">${t('account')}</span>
-          <span class="account-name">${accountName}</span>
+          <span class="account-name">${safeAccountName}</span>
         </div>
         <span class="account-edit-hint">${icons.chevronDown}</span>
       </div>
     </div>
   `;
+
+  if (isAntigravity) {
+    // Antigravity: show models list
+    html += renderAntigravityModels(data);
+  } else {
+    // OpenAI: show primary/secondary usage
+    html += renderOpenAIUsage(data);
+  }
+
+  if (data.error) html += `<div class="error-msg"><span>${icons.alert}</span><span>${escapeHtml(data.error)}</span></div>`;
+
+  html += `</div>`;
+  return html;
+}
+
+function renderOpenAIUsage(data: LimitsData): string {
+  const primaryPercent = data.primary_used_percent ?? 0;
+  const secondaryPercent = data.secondary_used_percent ?? 0;
+  const primaryClass = getUsageClass(primaryPercent);
+  const secondaryClass = getUsageClass(secondaryPercent);
+  const planIcon = data.plan_type?.toLowerCase() === 'team' ? icons.users :
+    data.plan_type?.toLowerCase() === 'pro' ? icons.star : icons.crown;
+
+  let html = '';
 
   if (data.plan_type) {
     html += `
@@ -695,7 +844,7 @@ function renderConnected(data: LimitsData): string {
         <span class="plan-icon">${planIcon}</span>
         <div class="plan-info">
           <span class="plan-label">${t('currentPlan')}</span>
-          <span class="plan-value">${data.plan_type}</span>
+          <span class="plan-value">${escapeHtml(data.plan_type)}</span>
         </div>
       </div>
     `;
@@ -727,8 +876,125 @@ function renderConnected(data: LimitsData): string {
   if (secondaryReset) html += `<div class="reset-time"><span class="reset-time-icon">${icons.clock}</span>${t('resetsIn')} <span class="reset-time-value">${secondaryReset}</span></div>`;
   html += `</div>`;
 
-  if (data.error) html += `<div class="error-msg"><span>${icons.alert}</span><span>${data.error}</span></div>`;
+  return html;
+}
 
+// Model sort order (lower = higher priority)
+const MODEL_SORT_ORDER: Record<string, number> = {
+  // Gemini models first
+  'gemini-3-flash': 1,
+  'gemini-3-pro-low': 2,
+  'gemini-2.5-pro': 3,
+  'gemini-2.5-flash': 4,
+  'gemini-3-pro-image': 5,
+  'gemini-3-pro-high': 6,
+  // Claude models after
+  'claude-sonnet-4': 10,
+  'claude-sonnet-4-thinking': 11,
+  'claude-4.5': 12,
+  'claude-sonnet-4-5': 12,
+  'claude-sonnet-4-5-thinking': 13,
+  'claude-3-7-sonnet': 14,
+  'claude-3-7-sonnet-thinking': 15,
+};
+
+function getModelSortKey(modelName: string): number {
+  const lowerName = modelName.toLowerCase();
+  // Check exact match
+  if (MODEL_SORT_ORDER[lowerName] !== undefined) {
+    return MODEL_SORT_ORDER[lowerName];
+  }
+  // Check partial match
+  for (const [key, order] of Object.entries(MODEL_SORT_ORDER)) {
+    if (lowerName.includes(key)) return order;
+  }
+  // Unknown models at the end
+  return lowerName.includes('gemini') ? 9 : 20;
+}
+
+// Format model name nicely if backend didn't provide display_name
+function formatModelDisplayName(name: string): string {
+  // If already looks formatted (has spaces and capitals), return as is
+  if (name.includes(' ') && /[A-Z]/.test(name)) {
+    return name;
+  }
+  
+  // Handle special patterns
+  let formatted = name
+    // Replace dashes/underscores with spaces
+    .replace(/[-_]/g, ' ')
+    // Handle version numbers like "4-5" -> "4.5", "3-7" -> "3.7"
+    .replace(/(\d) (\d)/g, '$1.$2')
+    // Capitalize first letter of each word
+    .split(' ')
+    .map(word => {
+      // Keep version numbers as is
+      if (/^\d/.test(word)) return word;
+      // Capitalize word
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(' ');
+  
+  // Fix common patterns
+  formatted = formatted
+    .replace(/^Gemini (\d)/i, 'Gemini $1')
+    .replace(/^Claude /i, 'Claude ')
+    .replace(/ Pro /i, ' Pro ')
+    .replace(/ Flash/i, ' Flash')
+    .replace(/ Sonnet/i, ' Sonnet')
+    .replace(/ Image/i, ' Image')
+    .replace(/ High\)?$/i, ' (High)')
+    .replace(/ Low\)?$/i, ' (Low)')
+    .replace(/ Thinking\)?$/i, ' (Thinking)')
+    .replace(/\( /g, '(')
+    .replace(/ \)/g, ')');
+  
+  return formatted;
+}
+
+function renderAntigravityModels(data: LimitsData): string {
+  const models = data.models || [];
+  
+  if (models.length === 0) {
+    return `<div class="empty-state" style="padding: 20px 0;"><p>No models available</p></div>`;
+  }
+
+  // Sort models by predefined order
+  const sortedModels = [...models].sort((a, b) => {
+    return getModelSortKey(a.model_name) - getModelSortKey(b.model_name);
+  });
+
+  let html = `<div class="models-list">`;
+  
+  for (const model of sortedModels) {
+    const usageClass = getUsageClass(model.used_percent);
+    const resetTime = formatResetTime(model.reset_time);
+    
+    // Determine model icon based on name
+    const modelNameLower = model.model_name.toLowerCase();
+    const isGemini = modelNameLower.includes('gemini');
+    const isClaude = modelNameLower.includes('claude');
+    const modelIcon = isGemini ? icons.gemini : (isClaude ? icons.claude : icons.sparkles);
+    const modelIconClass = isGemini ? 'gemini' : (isClaude ? 'claude' : '');
+    
+    // Format display name nicely
+    const displayName = formatModelDisplayName(model.display_name || model.model_name);
+    
+    html += `
+      <div class="model-item">
+        <div class="model-header">
+          <div class="model-info">
+            <span class="model-icon ${modelIconClass}">${modelIcon}</span>
+            <span class="model-name">${escapeHtml(displayName)}</span>
+          </div>
+          <span class="usage-percent ${usageClass}">${model.used_percent.toFixed(0)}%</span>
+        </div>
+        <div class="progress-track small"><div class="progress-bar ${usageClass}" style="width: ${Math.min(model.used_percent, 100)}%"></div></div>
+        ${resetTime ? `<div class="reset-time small"><span class="reset-time-icon">${icons.clock}</span>${t('resetsIn')} <span class="reset-time-value">${resetTime}</span></div>` : ''}
+      </div>
+    `;
+  }
+  
   html += `</div>`;
   return html;
 }
@@ -742,30 +1008,36 @@ function renderAccountsDropdownContent(): string {
   let html = '';
 
   for (const acc of accounts) {
+    const safeName = escapeHtml(acc.name);
+    const safeNameAttr = escapeAttr(acc.name);
+    const safeId = escapeAttr(acc.id);
     if (editingAccountId === acc.id) {
+
       html += `
         <div class="account-item ${acc.is_active ? 'active' : ''}">
           <div class="account-item-icon">${icons.user}</div>
-          <input type="text" class="account-name-input" id="editNameInput" value="${acc.name}" maxlength="30" autofocus>
+          <input type="text" class="account-name-input" id="editNameInput" value="${safeNameAttr}" maxlength="30" autofocus>
           <div class="account-edit-actions">
-            <button class="btn-save" data-save-id="${acc.id}">${icons.check}</button>
+            <button class="btn-save" data-save-id="${safeId}">${icons.check}</button>
+
             <button class="btn-cancel" id="cancelEditBtn">${icons.x}</button>
           </div>
         </div>
       `;
     } else {
       html += `
-        <div class="account-item ${acc.is_active ? 'active' : ''}" data-account-id="${acc.id}">
+        <div class="account-item ${acc.is_active ? 'active' : ''}" data-account-id="${safeId}">
           <div class="account-item-icon">${icons.user}</div>
           <div class="account-item-info">
-            <span class="account-item-name">${acc.name}</span>
+            <span class="account-item-name">${safeName}</span>
             <span class="account-item-status ${acc.is_active ? 'active' : ''}">${acc.is_active ? t('active') : ''}</span>
           </div>
           <div class="account-item-actions">
-            <button class="btn-account-action" data-edit-id="${acc.id}" title="${t('rename')}">${icons.pencil}</button>
-            ${!acc.is_active ? `<button class="btn-account-action delete" data-delete-id="${acc.id}" title="${t('delete')}">${icons.trash}</button>` : ''}
+            <button class="btn-account-action" data-edit-id="${safeId}" title="${t('rename')}">${icons.pencil}</button>
+            ${!acc.is_active ? `<button class="btn-account-action delete" data-delete-id="${safeId}" title="${t('delete')}">${icons.trash}</button>` : ''}
           </div>
         </div>
+
       `;
     }
   }
@@ -789,13 +1061,15 @@ function showBackendError(): void {
 function showError(msg: string): void {
   const content = document.getElementById("content");
   if (!content) return;
+  const safeMsg = escapeHtml(msg);
   content.innerHTML = `
     <div class="card">
-      <div class="error-msg"><span>${icons.alert}</span><span>${msg}</span></div>
+      <div class="error-msg"><span>${icons.alert}</span><span>${safeMsg}</span></div>
       <button class="btn-connect" id="retryBtn" style="margin-top: 16px;">${t('tryAgain')}</button>
     </div>
   `;
 }
+
 
 function updateLastUpdate(timestamp: number = Date.now(), isStale: boolean = false): void {
   const el = document.getElementById("lastUpdate");
@@ -818,6 +1092,14 @@ function updateLastUpdate(timestamp: number = Date.now(), isStale: boolean = fal
 document.addEventListener("click", async (e) => {
   const target = e.target as HTMLElement;
   const btn = target.closest('button');
+
+  // Provider tab click
+  const providerTab = target.closest('.provider-tab') as HTMLElement;
+  if (providerTab && providerTab.dataset.provider) {
+    const provider = providerTab.dataset.provider as Provider;
+    switchProvider(provider);
+    return;
+  }
 
   // Account selector toggle
   if (target.closest('#accountSelector')) {
@@ -974,8 +1256,7 @@ document.addEventListener("visibilitychange", () => {
   isWindowVisible = document.visibilityState === "visible";
 
   if (isWindowVisible) {
-    // Window became visible - refresh data and restart auto-refresh
-    refresh();
+    // Window became visible - restart auto-refresh (no immediate refresh)
     startAutoRefresh();
   } else {
     // Window hidden - stop auto-refresh to save resources

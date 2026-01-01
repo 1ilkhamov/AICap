@@ -6,6 +6,33 @@
 
 ## English
 
+### [1.2.0] - 2026-01-01
+
+#### Added
+- **Google Antigravity (Gemini) support** — new provider for tracking Google AI quotas
+- **Provider tabs** — switch between OpenAI and Antigravity in the UI
+- **Multi-model quota display** — see usage for each Gemini/Claude model:
+  - Gemini 3 Pro (High/Low), Gemini 2.5 Pro/Flash, Gemini 3 Flash
+  - Claude Sonnet 4, Claude 4.5 Sonnet (via Antigravity)
+- **Multi-account for Antigravity** — add, switch, rename, delete Google accounts
+- **Request ID tracing** — unique `X-Request-ID` header for debugging
+- **Account ID validation** — backend validates 8-char hex format
+
+#### Security
+- Removed hardcoded Google OAuth credentials — now requires env variables
+- Added `is_google_oauth_configured()` check before Antigravity operations
+- Fixed deprecated `datetime.utcnow()` → `datetime.now(timezone.utc)`
+- Enhanced `.gitignore` to prevent credential leaks
+
+#### Changed
+- Provider selection persisted in cache
+- Model names formatted for better readability
+- Models sorted by usage priority
+
+#### New Files
+- `backend/app/auth/google_oauth.py` — Google OAuth implementation
+- `backend/app/providers/antigravity.py` — Antigravity provider
+
 ### [1.1.1] - 2024-12-28
 
 #### Security Fixes
@@ -60,6 +87,33 @@
 ---
 
 ## Русский
+
+### [1.2.0] - 2026-01-01
+
+#### Добавлено
+- **Поддержка Google Antigravity (Gemini)** — новый провайдер для отслеживания квот Google AI
+- **Табы провайдеров** — переключение между OpenAI и Antigravity в интерфейсе
+- **Отображение квот по моделям** — использование для каждой модели Gemini/Claude:
+  - Gemini 3 Pro (High/Low), Gemini 2.5 Pro/Flash, Gemini 3 Flash
+  - Claude Sonnet 4, Claude 4.5 Sonnet (через Antigravity)
+- **Мульти-аккаунт для Antigravity** — добавление, переключение, переименование, удаление Google аккаунтов
+- **Request ID трейсинг** — уникальный заголовок `X-Request-ID` для отладки
+- **Валидация account_id** — backend проверяет формат (8 hex символов)
+
+#### Безопасность
+- Удалены hardcoded Google OAuth credentials — теперь требуются env переменные
+- Добавлена проверка `is_google_oauth_configured()` перед операциями Antigravity
+- Исправлен deprecated `datetime.utcnow()` → `datetime.now(timezone.utc)`
+- Улучшен `.gitignore` для предотвращения утечек credentials
+
+#### Изменено
+- Выбор провайдера сохраняется в кэше
+- Названия моделей форматируются для читаемости
+- Модели отсортированы по приоритету использования
+
+#### Новые файлы
+- `backend/app/auth/google_oauth.py` — реализация Google OAuth
+- `backend/app/providers/antigravity.py` — провайдер Antigravity
 
 ### [1.1.1] - 2024-12-28
 
@@ -116,6 +170,6 @@
 
 ## Planned / Планируется
 
-- Anthropic Claude support / Поддержка Anthropic Claude
-- Google AI support / Поддержка Google AI
+- Anthropic Claude direct support / Прямая поддержка Anthropic Claude
 - Usage history persistence / Сохранение истории использования
+- Charts and analytics / Графики и аналитика

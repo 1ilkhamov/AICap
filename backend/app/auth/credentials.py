@@ -12,6 +12,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import base64
 
+from ..config import ACCOUNT_ID_LENGTH
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +121,7 @@ class CredentialManager:
     def create_account(cls, provider: str, tokens: dict, name: Optional[str] = None) -> str:
         """Create new account and return its ID."""
         data = cls._load_all_data()
-        account_id = str(uuid.uuid4())[:8]
+        account_id = str(uuid.uuid4())[:ACCOUNT_ID_LENGTH]
         account_num = len(data["accounts"]) + 1
         data["accounts"][account_id] = {
             "provider": provider,
