@@ -129,6 +129,32 @@ class TestAPIv1:
         )
         assert response.status_code == 404
 
+    def test_refresh_limits_returns_data(self, client):
+        """Test that refresh endpoint returns provider data, not just status."""
+        response = client.post("/api/v1/limits/refresh", headers=client.auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "status" in data
+        assert data["status"] == "ok"
+        assert "last_update" in data
+        assert "providers" in data
+        assert isinstance(data["providers"], dict)
+
+    def test_antigravity_login_without_google_oauth(self, client, monkeypatch):
+        """Test that Antigravity login returns 400 when Google OAuth is not configured."""
+        import app.config as config
+
+        # Simulate missing Google OAuth credentials
+        monkeypatch.setattr(config, "GOOGLE_CLIENT_ID", "")
+        monkeypatch.setattr(config, "GOOGLE_CLIENT_SECRET", "")
+
+        response = client.get(
+            "/api/v1/auth/antigravity/login?open_browser=false",
+            headers=client.auth_headers,
+        )
+        assert response.status_code == 400
+        assert "Google OAuth not configured" in response.json()["detail"]
+
 
 class TestApiTokenMiddleware:
     """Test optional API token middleware."""
@@ -402,6 +428,42 @@ class TestMultiAccount:
         assert response.status_code == 400
         assert "Invalid account_id format" in response.json()["detail"]
 
+    def test_update_account_name_xss_validation(self, client):
+        """Test account name XSS validation - rejects special characters."""
+        # Valid names should pass (alphanumeric, spaces, hyphens, underscores)
+        valid_names = ["Test Account", "my-account", "account_1", "Account 123"]
+        for name in valid_names:
+            response = client.put(
+                f"/api/v1/accounts/deadbeef/name?name={name}",
+                headers=client.auth_headers,
+            )
+            # Should return 200 (account doesn't exist but format is valid)
+            assert response.status_code == 200, (
+                f"Valid name '{name}' should be accepted"
+            )
+
+        # Invalid names with special characters should be rejected
+        invalid_names = [
+            "<script>alert(1)</script>",
+            "name'--DROP",
+            "account@evil.com",
+            "test&param=value",
+            "name<tag>",
+            'test"quote',
+        ]
+        for name in invalid_names:
+            import urllib.parse
+
+            encoded_name = urllib.parse.quote(name)
+            response = client.put(
+                f"/api/v1/accounts/deadbeef/name?name={encoded_name}",
+                headers=client.auth_headers,
+            )
+            assert response.status_code == 400, (
+                f"Invalid name '{name}' should be rejected"
+            )
+            assert "Invalid account name" in response.json()["detail"]
+
     def test_delete_invalid_account_id_format(self, client):
         """Test deleting account with invalid ID format."""
         response = client.delete(
@@ -490,6 +552,23 @@ class TestHostSecurityHelpers:
         assert validate_account_id("ghijklmn") is False  # invalid chars
         assert validate_account_id("") is False  # empty
         assert validate_account_id("dead-beef") is False  # contains dash
+
+    def test_validate_account_name_function(self):
+        """Test validate_account_name helper function."""
+        from app.main import validate_account_name
+
+        # Valid names (alphanumeric, spaces, hyphens, underscores)
+        assert validate_account_name("Test Account") is True
+        assert validate_account_name("my-account") is True
+        assert validate_account_name("account_1") is True
+        assert validate_account_name("Account123") is True
+
+        # Invalid names (special characters)
+        assert validate_account_name("<script>") is False
+        assert validate_account_name("name'quote") is False
+        assert validate_account_name("test@email") is False
+        assert validate_account_name("test&param") is False
+        assert validate_account_name("") is False
 
     def test_request_id_middleware(self, client):
         """Test that request ID is added to responses."""

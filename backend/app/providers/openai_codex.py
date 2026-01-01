@@ -5,10 +5,11 @@ import json
 import logging
 import re
 import httpx
-from typing import Optional
+from typing import Optional, Set
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse, urljoin
 
 from ..config import CODEX_BASE_URL, CODEX_MODEL_NAME
 from ..auth.oauth import OpenAIOAuth
@@ -22,8 +23,15 @@ CODEX_PROMPT_URL_TEMPLATE = "https://raw.githubusercontent.com/openai/codex/{tag
 # Cache directory
 CACHE_DIR = Path.home() / ".aicap" / "cache"
 
-# Validation pattern for account_id (8 lowercase hex characters)
+# Security constants
+ALLOWED_HOSTS: Set[str] = {"github.com", "raw.githubusercontent.com"}
+MAX_RESPONSE_SIZE_BYTES = 1024 * 1024  # 1 MB limit for fetched instructions
+FETCH_TIMEOUT_SECONDS = 15.0
+
+# Validation patterns
 ACCOUNT_ID_PATTERN = re.compile(r"^[0-9a-f]{8}$")
+# Strict pattern for release tags: allows semver-like tags with optional prefix (e.g., "v1.0.0", "rust-v0.43.0")
+TAG_PATTERN = re.compile(r"^[a-zA-Z0-9][-a-zA-Z0-9._]{0,127}$")
 
 
 @dataclass
@@ -183,24 +191,107 @@ class OpenAICodexProvider:
         uuid_no_dash = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
         return bool(uuid_pattern.match(value) or uuid_no_dash.match(value))
 
-    async def _get_latest_release_tag(self) -> str:
-        """Get latest Codex release tag from GitHub."""
+    def _validate_url_host(self, url: str) -> bool:
+        """Validate that a URL's host is in the allowed list (SSRF protection)."""
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+            parsed = urlparse(url)
+            if parsed.scheme not in ("https",):
+                return False
+            if parsed.hostname not in ALLOWED_HOSTS:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _validate_tag(self, tag: str) -> bool:
+        """Validate release tag format to prevent path traversal and injection."""
+        if not tag or not isinstance(tag, str):
+            return False
+        # Reject path traversal attempts
+        if ".." in tag or "/" in tag or "\\" in tag:
+            return False
+        # Must match strict pattern
+        return bool(TAG_PATTERN.match(tag))
+
+    def _safe_cache_path(self, filename: str) -> Optional[Path]:
+        """Safely construct a cache file path, ensuring it stays within CACHE_DIR."""
+        try:
+            # Sanitize filename: only allow alphanumeric, dash, underscore, dot
+            safe_filename = re.sub(r"[^a-zA-Z0-9._-]", "_", filename)
+            if not safe_filename or safe_filename.startswith("."):
+                return None
+
+            cache_path = (CACHE_DIR / safe_filename).resolve()
+            cache_dir_resolved = CACHE_DIR.resolve()
+
+            # Ensure resolved path is within cache directory
+            if not str(cache_path).startswith(str(cache_dir_resolved)):
+                logger.warning(f"Path traversal attempt blocked: {filename}")
+                return None
+
+            return cache_path
+        except Exception as e:
+            logger.warning(f"Failed to construct safe cache path: {e}")
+            return None
+
+    async def _get_latest_release_tag(self) -> str:
+        """Get latest Codex release tag from GitHub with SSRF protection."""
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=False, timeout=FETCH_TIMEOUT_SECONDS
+            ) as client:
                 response = await client.get(GITHUB_RELEASES_URL)
+                current_url = GITHUB_RELEASES_URL
+
+                # Handle redirects manually with allowlist checks
+                max_redirects = 10
+                redirect_count = 0
+                while (
+                    response.status_code in (301, 302, 303, 307, 308)
+                    and redirect_count < max_redirects
+                ):
+                    redirect_count += 1
+                    location = response.headers.get("location")
+                    if not location:
+                        logger.warning("Redirect response missing Location header")
+                        return "rust-v0.43.0"  # Fallback
+
+                    # Support relative Location headers by resolving against current URL
+                    absolute_location = urljoin(current_url, location)
+
+                    # SSRF protection: validate redirect target BEFORE following
+                    if not self._validate_url_host(absolute_location):
+                        logger.warning(
+                            f"Redirect to untrusted host blocked: {absolute_location}"
+                        )
+                        return "rust-v0.43.0"  # Fallback
+
+                    response = await client.get(absolute_location)
+                    current_url = absolute_location
+
+                if redirect_count >= max_redirects:
+                    logger.warning("Too many redirects, aborting")
+                    return "rust-v0.43.0"  # Fallback
+
                 final_url = str(response.url)
+
                 if "/tag/" in final_url:
-                    return final_url.split("/tag/")[-1]
+                    tag = final_url.split("/tag/")[-1]
+                    # Validate tag format
+                    if self._validate_tag(tag):
+                        return tag
+                    else:
+                        logger.warning(f"Invalid tag format rejected: {tag[:50]}")
         except Exception as e:
             logger.warning(f"Failed to get latest release tag: {e}")
         return "rust-v0.43.0"  # Fallback
 
     async def _get_codex_instructions(self) -> str:
-        """Fetch Codex instructions from GitHub with caching."""
-        cache_file = CACHE_DIR / "codex-instructions.md"
+        """Fetch Codex instructions from GitHub with caching and security limits."""
+        cache_file = self._safe_cache_path("codex-instructions.md")
 
         # Use cached if exists and fresh
-        if cache_file.exists():
+        if cache_file and cache_file.exists():
             try:
                 mtime = datetime.fromtimestamp(cache_file.stat().st_mtime)
                 age_seconds = (datetime.now() - mtime).total_seconds()
@@ -211,24 +302,61 @@ class OpenAICodexProvider:
 
         try:
             tag = await self._get_latest_release_tag()
+
+            # Tag is already validated in _get_latest_release_tag, but double-check
+            if not self._validate_tag(tag):
+                raise ValueError(f"Invalid tag format: {tag[:50]}")
+
             url = CODEX_PROMPT_URL_TEMPLATE.format(tag=tag)
+
+            # Validate constructed URL
+            if not self._validate_url_host(url):
+                raise ValueError(f"Constructed URL has invalid host: {url}")
+
             logger.debug(f"Fetching instructions from: {url}")
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
-                if response.status_code == 200:
-                    instructions = response.text
-                    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                    cache_file.write_text(instructions, encoding="utf-8")
-                    logger.debug(f"Instructions cached, length: {len(instructions)}")
+            async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
+                # Use streaming to enforce size limit before loading into memory
+                async with client.stream("GET", url) as response:
+                    if response.status_code != 200:
+                        logger.warning(f"GitHub returned: {response.status_code}")
+                        raise Exception(
+                            f"GitHub returned status {response.status_code}"
+                        )
+
+                    # Check Content-Length header if available
+                    content_length = response.headers.get("content-length")
+                    if content_length and int(content_length) > MAX_RESPONSE_SIZE_BYTES:
+                        raise ValueError(f"Response too large: {content_length} bytes")
+
+                    # Read with size limit
+                    chunks = []
+                    total_size = 0
+                    async for chunk in response.aiter_bytes():
+                        total_size += len(chunk)
+                        if total_size > MAX_RESPONSE_SIZE_BYTES:
+                            raise ValueError(
+                                f"Response exceeded size limit of {MAX_RESPONSE_SIZE_BYTES} bytes"
+                            )
+                        chunks.append(chunk)
+
+                    instructions = b"".join(chunks).decode("utf-8")
+
+                    # Cache the instructions
+                    if cache_file:
+                        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                        cache_file.write_text(instructions, encoding="utf-8")
+                        logger.debug(
+                            f"Instructions cached, length: {len(instructions)}"
+                        )
+
                     return instructions
-                else:
-                    logger.warning(f"GitHub returned: {response.status_code}")
+
         except Exception as e:
             logger.warning(f"Failed to fetch instructions: {e}")
 
         # Return cached if available (even if stale)
-        if cache_file.exists():
+        if cache_file and cache_file.exists():
             try:
                 return cache_file.read_text(encoding="utf-8")
             except Exception:

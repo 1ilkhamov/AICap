@@ -149,6 +149,12 @@ cd desktop && npm install && npm run tauri dev
 cd backend && pytest tests/ -v
 ```
 
+### Backend-Desktop Security
+
+- **Token Authentication**: Desktop app passes API token via temporary file (`AICAP_API_TOKEN_FILE` env variable). Token authentication is required when binding to non-loopback addresses.
+- **OAuth State**: One-time use state tokens are provider-routed for enhanced security.
+- **Dev Mode**: `AICAP_DEV_MODE=true` enables CORS for localhost development only. Do not use in production.
+
 ## Tech Stack
 
 - **Backend**: Python 3.11+, FastAPI, PyInstaller

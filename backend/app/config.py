@@ -4,6 +4,8 @@ import os
 import sys
 import logging
 import json
+import re
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -89,16 +91,103 @@ CODEX_MODEL_NAME = os.getenv("CODEX_MODEL_NAME", "gpt-5.1-codex")
 # ===== Server Configuration =====
 API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("API_PORT", "1455"))
-AICAP_API_TOKEN = os.getenv("AICAP_API_TOKEN")
+
+# API Token: support both direct env var and file-based secret (sidecar pattern)
+# AICAP_API_TOKEN_FILE takes precedence if set
+_api_token_from_file: str | None = None
+_api_token_file_path = os.getenv("AICAP_API_TOKEN_FILE")
+if _api_token_file_path:
+    try:
+        token_path = Path(_api_token_file_path)
+
+        # Security: validate token file path before reading
+        # 1. Must not be a symlink (check BEFORE resolve)
+        if token_path.exists() and token_path.is_symlink():
+            logging.getLogger(__name__).error(
+                f"Security: token file cannot be a symlink: {_api_token_file_path}"
+            )
+        else:
+            # 2. Must be within OS temp directory (robust Windows-safe check)
+            temp_dir = Path(tempfile.gettempdir())
+            try:
+                # Normalize paths for comparison (Windows-safe: handles case, drive letters, separators)
+                temp_dir_abs = os.path.normcase(os.path.abspath(temp_dir))
+                token_path_abs = os.path.normcase(os.path.abspath(token_path))
+
+                # Use commonpath to check containment
+                common = os.path.commonpath([temp_dir_abs, token_path_abs])
+                if os.path.normcase(common) != temp_dir_abs:
+                    logging.getLogger(__name__).error(
+                        f"Security: token file must be in temp directory. Got: {_api_token_file_path}"
+                    )
+                    resolved_path = None
+                else:
+                    resolved_path = token_path.resolve()
+
+                    # Second containment check: ensure resolved path is still within temp directory
+                    # Compare against resolved temp directory to handle symlinks properly
+                    temp_dir_resolved = os.path.normcase(
+                        os.path.abspath(Path(tempfile.gettempdir()).resolve())
+                    )
+                    resolved_path_abs = os.path.normcase(os.path.abspath(resolved_path))
+                    common_resolved = os.path.commonpath(
+                        [temp_dir_resolved, resolved_path_abs]
+                    )
+                    if os.path.normcase(common_resolved) != temp_dir_resolved:
+                        logging.getLogger(__name__).error(
+                            f"Security: resolved token file path escapes temp directory. Got: {resolved_path}"
+                        )
+                        resolved_path = None
+            except (OSError, RuntimeError, ValueError) as e:
+                logging.getLogger(__name__).error(
+                    f"Cannot resolve token file path {_api_token_file_path}: {e}"
+                )
+                resolved_path = None
+
+            # 3. Must match expected filename pattern: aicap-token-<hex>.txt (case-insensitive hex)
+            if resolved_path and not re.match(
+                r"^aicap-token-[0-9a-fA-F]+\.txt$", resolved_path.name
+            ):
+                logging.getLogger(__name__).error(
+                    f"Security: token file must match pattern aicap-token-<hex>.txt. Got: {resolved_path.name}"
+                )
+            # 4. Must be a regular file (not special file)
+            elif resolved_path and resolved_path.exists():
+                if not resolved_path.is_file():
+                    logging.getLogger(__name__).error(
+                        f"Security: token file must be a regular file: {_api_token_file_path}"
+                    )
+                else:
+                    # All validations passed - safe to read and delete
+                    _api_token_from_file = resolved_path.read_text().strip()
+                    # Best-effort deletion of token file after reading
+                    try:
+                        resolved_path.unlink()
+                        logging.getLogger(__name__).info(
+                            f"Read and deleted API token file: {_api_token_file_path}"
+                        )
+                    except OSError as e:
+                        logging.getLogger(__name__).warning(
+                            f"Could not delete API token file {_api_token_file_path}: {e}"
+                        )
+            elif resolved_path:
+                logging.getLogger(__name__).warning(
+                    f"AICAP_API_TOKEN_FILE set but file not found: {_api_token_file_path}"
+                )
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            f"Error reading API token file {_api_token_file_path}: {e}"
+        )
+
+AICAP_API_TOKEN = _api_token_from_file or os.getenv("AICAP_API_TOKEN")
+
+# Dev mode flag for CORS and security warnings
+AICAP_DEV_MODE = os.getenv("AICAP_DEV_MODE", "").lower() == "true"
 
 # Allowed origins for CORS (Tauri app)
 
 # In production, only Tauri origins are needed
-_DEV_ORIGINS = (
-    ["http://localhost:1420"]
-    if os.getenv("AICAP_DEV_MODE", "").lower() == "true"
-    else []
-)
+_DEV_ORIGINS = ["http://localhost:1420"] if AICAP_DEV_MODE else []
 CORS_ORIGINS = [
     "tauri://localhost",  # Tauri production
     "https://tauri.localhost",  # Tauri production (alternative)
@@ -120,27 +209,36 @@ CREDENTIAL_OPENAI = "openai-tokens"
 UPDATE_INTERVAL_MINUTES = 5
 
 # ===== Google Antigravity OAuth =====
-# Client credentials must be set via environment variables
-# Get your credentials from Google Cloud Console: https://console.cloud.google.com/apis/credentials
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+# Public client credentials for Antigravity (desktop app - not secret)
+# These are the same credentials used by Antigravity IDE
+GOOGLE_CLIENT_ID = os.getenv(
+    "GOOGLE_CLIENT_ID",
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+)
+GOOGLE_CLIENT_SECRET = os.getenv(
+    "GOOGLE_CLIENT_SECRET",
+    "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"
+)
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_REDIRECT_URI = os.getenv(
-    "GOOGLE_REDIRECT_URI",
-    "http://localhost:1455/auth/callback"
+    "GOOGLE_REDIRECT_URI", "http://localhost:1455/auth/callback"
 )
-GOOGLE_SCOPES = " ".join([
-    "https://www.googleapis.com/auth/cloud-platform",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/cclog",
-    "https://www.googleapis.com/auth/experimentsandconfigs",
-    "openid",
-])
+GOOGLE_SCOPES = " ".join(
+    [
+        "https://www.googleapis.com/auth/cloud-platform",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "https://www.googleapis.com/auth/cclog",
+        "https://www.googleapis.com/auth/experimentsandconfigs",
+        "openid",
+    ]
+)
 
 # Antigravity API
-ANTIGRAVITY_API_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+ANTIGRAVITY_API_URL = (
+    "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+)
 
 
 def is_google_oauth_configured() -> bool:
@@ -167,7 +265,17 @@ def validate_host_security(host: str, token: str | None) -> None:
     """Validate that non-loopback hosts require API token.
 
     Raises SystemExit if binding to non-loopback without AICAP_API_TOKEN.
+    Logs warning if dev mode enabled with non-loopback host.
     """
+    logger = logging.getLogger(__name__)
+
+    # Warn if dev mode is enabled with non-loopback host (potential security issue)
+    if AICAP_DEV_MODE and not is_loopback_host(host):
+        logger.warning(
+            f"SECURITY WARNING: AICAP_DEV_MODE=true with non-loopback host '{host}'. "
+            "Dev CORS origins are enabled. This should only be used in development environments."
+        )
+
     if not is_loopback_host(host) and not token:
         import sys
 

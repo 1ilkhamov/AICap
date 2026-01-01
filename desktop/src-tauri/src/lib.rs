@@ -1,4 +1,5 @@
 use std::sync::OnceLock;
+use std::path::PathBuf;
 use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, Runtime, WindowEvent,
@@ -8,6 +9,7 @@ use tauri_plugin_shell::process::CommandChild;
 use std::sync::Mutex;
 use rand::RngCore;
 use regex::Regex;
+use std::io::Write;
 
 const DEFAULT_API_URL: &str = "http://127.0.0.1:1455";
 
@@ -79,6 +81,9 @@ static ACCOUNT_ID_REGEX: OnceLock<Regex> = OnceLock::new();
 // Backend process handle
 static BACKEND_PROCESS: OnceLock<Mutex<Option<CommandChild>>> = OnceLock::new();
 
+// Token file path for cleanup
+static TOKEN_FILE_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
 /// Validates that account_id matches expected format: exactly 8 lowercase hex characters.
 /// This matches the backend's uuid.uuid4()[:8] format used in credentials.py.
 fn validate_account_id(account_id: &str) -> Result<(), String> {
@@ -111,6 +116,53 @@ fn get_client() -> &'static reqwest::Client {
     })
 }
 
+/// Writes the API token to a temp file and returns the file path.
+/// On Unix, restricts permissions to 0600. On Windows, relies on temp dir ACLs.
+fn write_token_file(token: &str) -> Result<PathBuf, String> {
+    let temp_dir = std::env::temp_dir();
+    
+    // Generate cryptographically random filename to prevent prediction attacks
+    let mut rng = rand::rngs::OsRng;
+    let mut random_bytes = [0u8; 16];
+    rng.fill_bytes(&mut random_bytes);
+    let filename = format!("aicap-token-{}.txt", 
+        random_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+    let token_path = temp_dir.join(filename);
+
+    // Create file atomically with O_EXCL to prevent symlink/collision attacks
+    // On Unix, set mode 0o600 at creation time
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    
+    let mut file = options.open(&token_path)
+        .map_err(|e| format!("Failed to create token file: {}", e))?;
+
+    file.write_all(token.as_bytes())
+        .map_err(|e| format!("Failed to write token to file: {}", e))?;
+
+    file.flush()
+        .map_err(|e| format!("Failed to flush token file: {}", e))?;
+
+    Ok(token_path)
+}
+
+/// Removes the token file if it exists.
+fn cleanup_token_file() {
+    let token_guard = TOKEN_FILE_PATH.get_or_init(|| Mutex::new(None));
+    if let Ok(mut token_path) = token_guard.lock() {
+        if let Some(path) = token_path.take() {
+            let _ = std::fs::remove_file(&path);
+            println!("Token file cleaned up");
+        }
+    }
+}
+
 fn start_backend(app: &tauri::AppHandle) -> Result<(), String> {
     let backend_guard = BACKEND_PROCESS.get_or_init(|| Mutex::new(None));
     let mut backend = backend_guard.lock().map_err(|e: std::sync::PoisonError<_>| e.to_string())?;
@@ -119,11 +171,22 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), String> {
     if backend.is_some() {
         return Ok(());
     }
+
+    // Write token to temp file
+    let token = get_api_token();
+    let token_path = write_token_file(token)?;
+    let token_path_str = token_path.to_string_lossy().to_string();
+
+    // Store path for cleanup
+    let token_guard = TOKEN_FILE_PATH.get_or_init(|| Mutex::new(None));
+    if let Ok(mut stored_path) = token_guard.lock() {
+        *stored_path = Some(token_path);
+    }
     
     // Try to spawn the sidecar
     match app.shell().sidecar("aicap-backend") {
         Ok(cmd) => {
-            let cmd = cmd.env("AICAP_API_TOKEN", get_api_token());
+            let cmd = cmd.env("AICAP_API_TOKEN_FILE", &token_path_str);
             match cmd.spawn() {
                 Ok((_, child)) => {
                     *backend = Some(child);
@@ -132,6 +195,8 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), String> {
                 }
                 Err(e) => {
                     println!("Failed to spawn backend: {}", e);
+                    // Clean up token file since backend didn't start
+                    cleanup_token_file();
                     // Not fatal - backend might be running externally
                     Ok(())
                 }
@@ -139,6 +204,8 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), String> {
         }
         Err(e) => {
             println!("Sidecar not found (dev mode?): {}", e);
+            // Clean up token file since backend didn't start
+            cleanup_token_file();
             // Not fatal in dev mode
             Ok(())
         }
@@ -156,6 +223,8 @@ fn stop_backend() {
             }
         }
     }
+    // Clean up token file
+    cleanup_token_file();
 }
 
 #[tauri::command]
@@ -168,11 +237,40 @@ async fn fetch_limits() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("API error: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("API error {}: {}", status, detail));
     }
 
     resp.json().await.map_err(|e| format!("Parse error: {}", e))
 }
+
+#[tauri::command]
+async fn refresh_limits() -> Result<serde_json::Value, String> {
+    let api_base = get_api_base();
+    let resp = get_client()
+        .post(format!("{}/api/v1/limits/refresh", api_base))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("API error {}: {}", status, detail));
+    }
+
+    resp.json().await.map_err(|e| format!("Parse error: {}", e))
+}
+
 
 #[tauri::command]
 async fn login_openai() -> Result<(), String> {
@@ -184,7 +282,13 @@ async fn login_openai() -> Result<(), String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Login failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Login failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -199,7 +303,13 @@ async fn login_antigravity() -> Result<(), String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Login failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Login failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -214,7 +324,13 @@ async fn add_account_openai() -> Result<(), String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Add account failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Add account failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -229,7 +345,13 @@ async fn add_account_antigravity() -> Result<(), String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Add account failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Add account failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -244,7 +366,13 @@ async fn logout_openai() -> Result<(), String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Logout failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Logout failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -259,7 +387,13 @@ async fn logout_antigravity() -> Result<(), String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Logout failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Logout failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -278,7 +412,13 @@ async fn get_accounts(provider: Option<String>) -> Result<serde_json::Value, Str
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("API error: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("API error {}: {}", status, detail));
     }
 
     resp.json().await.map_err(|e| format!("Parse error: {}", e))
@@ -295,7 +435,13 @@ async fn activate_account(account_id: String) -> Result<(), String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Activate failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Activate failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -311,7 +457,13 @@ async fn update_account_name(account_id: String, name: String) -> Result<(), Str
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Update failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Update failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -327,7 +479,13 @@ async fn delete_account(account_id: String) -> Result<(), String> {
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Delete failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+            .unwrap_or(body);
+        return Err(format!("Delete failed {}: {}", status, detail));
     }
     Ok(())
 }
@@ -440,6 +598,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             fetch_limits,
+            refresh_limits,
             login_openai,
             login_antigravity,
             add_account_openai,

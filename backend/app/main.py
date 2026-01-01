@@ -48,10 +48,23 @@ REQUEST_ID_HEADER = "X-Request-ID"
 # Account ID validation pattern (8 lowercase hex characters)
 ACCOUNT_ID_PATTERN = re.compile(f"^[0-9a-f]{{{ACCOUNT_ID_LENGTH}}}$")
 
+# Account name validation pattern: alphanumeric, spaces, hyphens, underscores
+# Matches frontend regex for consistency (XSS hardening)
+ACCOUNT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9\s\-_]+$")
+
+# OAuth callback param length limits (security hardening)
+OAUTH_CODE_MAX_LENGTH = 2048
+OAUTH_STATE_MAX_LENGTH = 256
+
 
 def validate_account_id(account_id: str) -> bool:
     """Validate account_id format: exactly 8 lowercase hex characters."""
     return bool(ACCOUNT_ID_PATTERN.match(account_id))
+
+
+def validate_account_name(name: str) -> bool:
+    """Validate account name: alphanumeric, spaces, hyphens, underscores only."""
+    return bool(ACCOUNT_NAME_PATTERN.match(name))
 
 
 # Global State
@@ -166,17 +179,25 @@ async def _run_update_all_limits() -> None:
     for name, provider in providers.items():
         if provider.is_authenticated():
             try:
-                new_limits[name] = await provider.get_limits()
+                # Add timeout per provider to prevent indefinite blocking
+                new_limits[name] = await asyncio.wait_for(
+                    provider.get_limits(), timeout=60.0
+                )
+            except asyncio.TimeoutError:
+                logger.error("Timeout updating limits for %s (60s)", name)
             except Exception as e:
                 logger.error("Failed to update limits for %s: %s", name, e)
 
     # Atomic update: merge new limits into cached_limits under lock
-    with _cached_limits_lock:
-        for name, limits in new_limits.items():
-            cached_limits[name] = limits
-
-    last_update = datetime.now()
-    logger.info("Updated limits for %s providers", len(new_limits))
+    # Only update last_update if at least one provider succeeded
+    if new_limits:
+        with _cached_limits_lock:
+            for name, limits in new_limits.items():
+                cached_limits[name] = limits
+        last_update = datetime.now()
+        logger.info("Updated limits for %s providers", len(new_limits))
+    else:
+        logger.warning("No provider limits updated")
 
 
 async def update_all_limits():
@@ -213,9 +234,10 @@ async def lifespan(app: FastAPI):
         minutes=5,
         id="cleanup_oauth_states",
     )
+    # Run initial update BEFORE starting scheduler for deterministic startup
+    await update_all_limits()
     scheduler.start()
     logger.info("Scheduler started with cleanup jobs")
-    await update_all_limits()
     yield
     scheduler.shutdown(wait=True)
     logger.info("Scheduler stopped")
@@ -431,9 +453,14 @@ async def get_provider_limits(provider: str):
 async def refresh_limits() -> dict:
     """Force refresh limits for all authenticated providers."""
     await update_all_limits()
+    with _cached_limits_lock:
+        providers_data = {
+            name: limits.to_dict() for name, limits in cached_limits.items()
+        }
     return {
         "status": "ok",
         "last_update": last_update.isoformat() if last_update else None,
+        "providers": providers_data,
     }
 
 
@@ -455,7 +482,14 @@ async def login(
 
     if provider not in providers:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
-    url = providers[provider].get_auth_url(add_new_account=add_account)
+
+    # Get auth URL with proper error handling
+    try:
+        url = providers[provider].get_auth_url(add_new_account=add_account)
+    except ValueError as e:
+        # Convert ValueError from provider to 400 HTTPException
+        raise HTTPException(status_code=400, detail=str(e))
+
     if open_browser:
         webbrowser.open(url)
         return {"status": "ok", "message": "Browser opened for authentication"}
@@ -505,6 +539,12 @@ async def update_account_name(
     """Update the display name of an account."""
     if not validate_account_id(account_id):
         raise HTTPException(status_code=400, detail="Invalid account_id format")
+    # XSS hardening: validate account name characters server-side
+    if not validate_account_name(name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid account name: only alphanumeric characters, spaces, hyphens, and underscores allowed",
+        )
     success = CredentialManager.update_account_name(account_id, name)
     return {"status": "ok" if success else "error"}
 
@@ -604,8 +644,8 @@ async def get_metrics():
 @app.get("/auth/callback", response_class=HTMLResponse)
 async def auth_callback(
     request: Request,
-    code: str = Query(..., min_length=10),
-    state: str = Query(..., min_length=16),
+    code: str = Query(..., min_length=10, max_length=OAUTH_CODE_MAX_LENGTH),
+    state: str = Query(..., min_length=16, max_length=OAUTH_STATE_MAX_LENGTH),
 ):
     """OAuth callback handler with CSRF validation and rate limiting."""
     client_ip = request.client.host if request.client else "unknown"
@@ -623,7 +663,7 @@ async def auth_callback(
         </html>
         """
 
-    # Validate state first (CSRF protection)
+    # Validate state first (CSRF protection) - non-consuming to determine provider
     state_data = oauth_state_manager.validate_state(state)
     if not state_data:
         logger.warning(f"Invalid OAuth state from {client_ip}: {state[:16]}...")
@@ -637,25 +677,41 @@ async def auth_callback(
         </html>
         """
 
-    for name, provider in providers.items():
-        success = await provider.handle_callback(code, state)
-        if success:
-            logger.info(f"Successful OAuth callback for {name} from {client_ip}")
-            limits = await provider.get_limits()
-            with _cached_limits_lock:
-                cached_limits[name] = limits
-            return """
-            <html>
-                <head><title>Authentication Successful</title></head>
-                <body style="font-family: Arial; text-align: center; padding: 50px; background: #0a0a12; color: #fff;">
-                    <h1 style="color: #4ade80;">✅ Authentication Successful!</h1>
-                    <p>You can close this window and return to the application.</p>
-                    <script>setTimeout(() => window.close(), 3000);</script>
-                </body>
-            </html>
-            """
+    # Determine provider from state
+    provider_name = state_data.provider
+    provider = providers.get(provider_name)
 
-    logger.warning(f"OAuth callback failed for {client_ip}")
+    if not provider:
+        logger.error(f"Unknown provider in state: {provider_name} from {client_ip}")
+        return """
+        <html>
+            <head><title>Invalid Provider</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px; background: #0a0a12; color: #fff;">
+                <h1 style="color: #f87171;">❌ Invalid Provider</h1>
+                <p>Unknown provider. Please try logging in again from the application.</p>
+            </body>
+        </html>
+        """
+
+    # Route to the specific provider
+    success = await provider.handle_callback(code, state)
+    if success:
+        logger.info(f"Successful OAuth callback for {provider_name} from {client_ip}")
+        limits = await provider.get_limits()
+        with _cached_limits_lock:
+            cached_limits[provider_name] = limits
+        return """
+        <html>
+            <head><title>Authentication Successful</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px; background: #0a0a12; color: #fff;">
+                <h1 style="color: #4ade80;">✅ Authentication Successful!</h1>
+                <p>You can close this window and return to the application.</p>
+                <script>setTimeout(() => window.close(), 3000);</script>
+            </body>
+        </html>
+        """
+
+    logger.warning(f"OAuth callback failed for {provider_name} from {client_ip}")
     return """
     <html>
         <head><title>Authentication Failed</title></head>

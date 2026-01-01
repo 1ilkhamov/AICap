@@ -100,8 +100,7 @@ class OpenAIOAuth:
 
         # Use secure state manager instead of simple random
         state = oauth_state_manager.create_state(
-            add_new_account=add_new_account,
-            provider=self.PROVIDER
+            add_new_account=add_new_account, provider=self.PROVIDER
         )
 
         params = {
@@ -137,15 +136,18 @@ class OpenAIOAuth:
         """Exchange authorization code for tokens with proper state validation."""
         logger.debug("Exchange code called")
 
-        # Validate state using secure state manager
-        state_data = oauth_state_manager.validate_state(state)
+        # Atomically validate AND consume state to prevent replay attacks (TOCTOU fix)
+        # Pass expected provider to ensure state is only consumed by the correct provider
+        state_data = oauth_state_manager.validate_and_consume(
+            state, expected_provider=self.PROVIDER
+        )
         if not state_data:
             logger.warning("Invalid or expired OAuth state")
             return None
 
         with self._flow_lock:
             self._cleanup_expired_flows_unsafe()
-            pending_flow = self._pending_flows.get(state)
+            pending_flow = self._pending_flows.pop(state, None)
 
         if not pending_flow:
             logger.warning("No pending flow for state")
@@ -174,9 +176,6 @@ class OpenAIOAuth:
         except httpx.RequestError as e:
             logger.error(f"Network error during token exchange: {e}")
             return None
-        finally:
-            with self._flow_lock:
-                self._pending_flows.pop(state, None)
 
         if response.status_code != 200:
             logger.error(f"Token exchange failed: {response.status_code}")
@@ -213,9 +212,6 @@ class OpenAIOAuth:
             save_result = CredentialManager.save_tokens(self.PROVIDER, tokens_dict)
             if not save_result:
                 logger.error("Failed to save tokens")
-
-        # Consume the state to prevent replay attacks
-        oauth_state_manager.consume_state(state)
 
         return tokens
 

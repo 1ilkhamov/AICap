@@ -67,6 +67,34 @@ class TestStateManager:
         assert manager.consume_state(state) is True
         assert manager.validate_state(state) is None
 
+    def test_validate_and_consume_atomic(self):
+        """Test atomic validate and consume operation."""
+        manager = OAuthStateManager()
+        state = manager.create_state()
+
+        # First call should succeed
+        data = manager.validate_and_consume(state)
+        assert data is not None
+        assert data.state == state
+
+        # Second call should fail (state already consumed)
+        data2 = manager.validate_and_consume(state)
+        assert data2 is None
+
+    def test_validate_and_consume_prevents_replay(self):
+        """Test that validate_and_consume prevents replay attacks."""
+        manager = OAuthStateManager()
+        state = manager.create_state()
+
+        # Consume atomically
+        data = manager.validate_and_consume(state)
+        assert data is not None
+
+        # validate_state should also fail now
+        assert manager.validate_state(state) is None
+        # consume_state should also fail
+        assert manager.consume_state(state) is False
+
     def test_state_expiration(self):
         """Test state expiration."""
         manager = OAuthStateManager()
@@ -154,7 +182,7 @@ class TestTokenExchange:
                 "app.auth.credentials.CredentialManager.save_tokens", return_value=True
             ):
                 with patch(
-                    "app.auth.state_manager.oauth_state_manager.validate_state"
+                    "app.auth.state_manager.oauth_state_manager.validate_and_consume"
                 ) as mock_validate:
                     from app.auth.state_manager import StateData
 
@@ -164,12 +192,7 @@ class TestTokenExchange:
                         add_new_account=False,
                         nonce="test",
                     )
-                    with patch(
-                        "app.auth.state_manager.oauth_state_manager.consume_state"
-                    ):
-                        result = await oauth.exchange_code(
-                            "valid_code_12345", flow.state
-                        )
+                    result = await oauth.exchange_code("valid_code_12345", flow.state)
 
         assert result is not None
         assert result.access_token == "access_123"
@@ -204,22 +227,22 @@ class TestTokenExchange:
                 "app.auth.credentials.CredentialManager.save_tokens", return_value=True
             ):
                 with patch(
-                    "app.auth.state_manager.oauth_state_manager.validate_state"
+                    "app.auth.state_manager.oauth_state_manager.validate_and_consume"
                 ) as mock_validate:
                     from app.auth.state_manager import StateData
 
-                    mock_validate.side_effect = lambda state: StateData(
-                        state=state,
-                        created_at=int(time.time()),
-                        add_new_account=False,
-                        nonce="test",
-                    )
-                    with patch(
-                        "app.auth.state_manager.oauth_state_manager.consume_state"
-                    ):
-                        result = await oauth.exchange_code(
-                            "valid_code_12345", flow_two.state
+                    mock_validate.side_effect = (
+                        lambda state, expected_provider=None: StateData(
+                            state=state,
+                            created_at=int(time.time()),
+                            add_new_account=False,
+                            nonce="test",
+                            provider=expected_provider or "openai",
                         )
+                    )
+                    result = await oauth.exchange_code(
+                        "valid_code_12345", flow_two.state
+                    )
 
         assert result is not None
         assert captured["code_verifier"] == flow_two.pkce.verifier

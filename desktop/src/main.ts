@@ -254,7 +254,8 @@ function showConfirmDialog(title: string, message: string): Promise<boolean> {
   });
 }
 
-// Debounce helper
+// Debounce helper (currently unused but kept for potential future use)
+// @ts-ignore TS6133
 function debounce<T extends (...args: unknown[]) => unknown>(fn: T, ms: number): T {
   let timeoutId: ReturnType<typeof setTimeout>;
   return ((...args: unknown[]) => {
@@ -486,7 +487,7 @@ async function removeAccount(accountId: string): Promise<void> {
 }
 
 
-async function refresh(): Promise<void> {
+async function refresh(forceBackendRefresh: boolean = false): Promise<void> {
   if (isLoading) return;
 
   setButtonLoading("refreshBtn", true);
@@ -511,9 +512,14 @@ async function refresh(): Promise<void> {
     }
 
     await fetchAccounts();
-    const response = await withRetry(() => invoke<{ providers: Record<string, LimitsData> }>("fetch_limits"));
     
-    // Update limits for all providers
+    // If forceBackendRefresh is true, call POST /api/v1/limits/refresh to force backend to re-fetch
+    const response = forceBackendRefresh 
+      ? await withRetry(() => invoke<{ providers: Record<string, LimitsData>, last_update?: string | null }>("refresh_limits"))
+      : await withRetry(() => invoke<{ providers: Record<string, LimitsData>, last_update?: string | null }>("fetch_limits"));
+    
+    // Replace limitsData entirely with response.providers to clear stale providers
+    limitsData = { openai: null, antigravity: null };
     if (response.providers?.openai) {
       limitsData.openai = response.providers.openai;
     }
@@ -525,7 +531,13 @@ async function refresh(): Promise<void> {
     saveToCache(limitsData, accounts);
 
     renderContent();
-    updateLastUpdate(Date.now(), false);
+    // Use backend last_update if available (ISO string), parse and fall back to Date.now() if invalid
+    let timestamp = Date.now();
+    if (response.last_update) {
+      const parsed = Date.parse(response.last_update);
+      timestamp = !isNaN(parsed) ? parsed : Date.now();
+    }
+    updateLastUpdate(timestamp, false);
 
     const currentLimits = limitsData[currentProvider];
     if (currentLimits?.is_authenticated) await checkAndNotify(currentLimits);
@@ -552,12 +564,55 @@ async function login(): Promise<void> {
   setButtonLoading("loginBtn", true, t('openingBrowser'));
 
   try {
-    if (currentProvider === 'antigravity') {
-      await invoke("login_antigravity");
+    // Check if running in Tauri or browser
+    const isTauri = typeof window !== 'undefined' && '__TAURI__' in window;
+    
+    if (isTauri) {
+      // Tauri mode: use invoke to call backend and open browser
+      try {
+        if (currentProvider === 'antigravity') {
+          await invoke("login_antigravity");
+        } else {
+          await invoke("login_openai");
+        }
+      } catch (e) {
+        console.error("Login invoke error:", e);
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        // Extract detail from error message if present (format: "Error message: detail")
+        const detail = errorMsg.includes(':') ? errorMsg.split(':').slice(1).join(':').trim() : errorMsg;
+        showToast(detail || t('fetchError'), 'error');
+        setButtonLoading("loginBtn", false);
+        return;
+      }
     } else {
-      await invoke("login_openai");
+      // Browser mode: fetch auth URL and open in new tab
+      try {
+        const backendUrl = 'http://127.0.0.1:1455';
+        const authEndpoint = currentProvider === 'antigravity' 
+          ? `${backendUrl}/api/v1/auth/antigravity/login?open_browser=false`
+          : `${backendUrl}/api/v1/auth/openai/login?open_browser=false`;
+        
+        const response = await fetch(authEndpoint);
+        if (!response.ok) {
+          throw new Error(`Auth request failed: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        if (data.url) {
+          window.open(data.url, '_blank', 'noopener,noreferrer');
+        } else {
+          throw new Error('No auth URL returned');
+        }
+      } catch (e) {
+        console.error("Browser login error:", e);
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        showToast(errorMsg || t('fetchError'), 'error');
+        setButtonLoading("loginBtn", false);
+        return;
+      }
     }
     
+    // Poll for authentication completion
     let attempts = 0;
     const poll = async () => {
       attempts++;
@@ -565,14 +620,22 @@ async function login(): Promise<void> {
       const currentLimits = limitsData[currentProvider];
       if (currentLimits?.is_authenticated) {
         setButtonLoading("loginBtn", false);
+        showToast(t('connected'), 'success');
         return;
       }
       if (attempts < 30) setTimeout(poll, Math.min(2000 * Math.pow(1.2, attempts - 1), 5000));
-      else setButtonLoading("loginBtn", false);
+      else {
+        setButtonLoading("loginBtn", false);
+        showToast(t('fetchError'), 'error');
+      }
     };
     setTimeout(poll, 3000);
   } catch (e) {
     console.error("Login error:", e);
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    // Extract detail from error message if present
+    const detail = errorMsg.includes(':') ? errorMsg.split(':').slice(1).join(':').trim() : errorMsg;
+    showToast(detail || t('fetchError'), 'error');
     setButtonLoading("loginBtn", false);
   }
 }
@@ -598,9 +661,10 @@ function switchProvider(provider: Provider): void {
 }
 
 function getUsageClass(percent: number): string {
-  if (percent >= 80) return "high";
-  if (percent >= 50) return "medium";
-  return "low";
+  // percent = remaining percentage (0% = empty/bad, 100% = full/good)
+  if (percent <= 20) return "high";    // Critical: 0-20% remaining
+  if (percent <= 50) return "medium";  // Warning: 21-50% remaining
+  return "low";                        // Good: 51-100% remaining
 }
 
 function formatResetTime(isoString?: string): string | null {
@@ -831,8 +895,9 @@ function renderConnected(data: LimitsData): string {
 function renderOpenAIUsage(data: LimitsData): string {
   const primaryPercent = data.primary_used_percent ?? 0;
   const secondaryPercent = data.secondary_used_percent ?? 0;
-  const primaryClass = getUsageClass(primaryPercent);
-  const secondaryClass = getUsageClass(secondaryPercent);
+  // OpenAI shows "used" percent, so invert for color class (100% used = 0% remaining = bad)
+  const primaryClass = getUsageClass(100 - primaryPercent);
+  const secondaryClass = getUsageClass(100 - secondaryPercent);
   const planIcon = data.plan_type?.toLowerCase() === 'team' ? icons.users :
     data.plan_type?.toLowerCase() === 'pro' ? icons.star : icons.crown;
 
@@ -855,7 +920,10 @@ function renderOpenAIUsage(data: LimitsData): string {
     <div class="usage-block">
       <div class="usage-header">
         <span class="usage-label"><span class="usage-label-icon">${icons.bolt}</span>${t('fiveHourWindow')}</span>
-        <span class="usage-percent ${primaryClass}">${primaryPercent.toFixed(0)}%</span>
+        <div class="usage-value">
+          <span class="usage-percent ${primaryClass}">${primaryPercent.toFixed(0)}%</span>
+          <span class="usage-hint">${t('used')}</span>
+        </div>
       </div>
       <div class="progress-track"><div class="progress-bar ${primaryClass}" style="width: ${Math.min(primaryPercent, 100)}%"></div></div>
   `;
@@ -868,7 +936,10 @@ function renderOpenAIUsage(data: LimitsData): string {
     <div class="usage-block">
       <div class="usage-header">
         <span class="usage-label"><span class="usage-label-icon">${icons.calendar}</span>${t('weeklyWindow')}</span>
-        <span class="usage-percent ${secondaryClass}">${secondaryPercent.toFixed(0)}%</span>
+        <div class="usage-value">
+          <span class="usage-percent ${secondaryClass}">${secondaryPercent.toFixed(0)}%</span>
+          <span class="usage-hint">${t('used')}</span>
+        </div>
       </div>
       <div class="progress-track"><div class="progress-bar ${secondaryClass}" style="width: ${Math.min(secondaryPercent, 100)}%"></div></div>
   `;
@@ -967,7 +1038,9 @@ function renderAntigravityModels(data: LimitsData): string {
   let html = `<div class="models-list">`;
   
   for (const model of sortedModels) {
-    const usageClass = getUsageClass(model.used_percent);
+    // remaining_fraction is 0-1, convert to percentage (0-100)
+    const remainingPercent = model.remaining_fraction * 100;
+    const usageClass = getUsageClass(remainingPercent);
     const resetTime = formatResetTime(model.reset_time);
     
     // Determine model icon based on name
@@ -981,16 +1054,19 @@ function renderAntigravityModels(data: LimitsData): string {
     const displayName = formatModelDisplayName(model.display_name || model.model_name);
     
     html += `
-      <div class="model-item">
+      <div class="model-card">
         <div class="model-header">
           <div class="model-info">
             <span class="model-icon ${modelIconClass}">${modelIcon}</span>
             <span class="model-name">${escapeHtml(displayName)}</span>
           </div>
-          <span class="usage-percent ${usageClass}">${model.used_percent.toFixed(0)}%</span>
+          <div class="usage-value">
+            <span class="usage-percent ${usageClass}">${remainingPercent.toFixed(0)}%</span>
+            <span class="usage-hint">${t('remaining')}</span>
+          </div>
         </div>
-        <div class="progress-track small"><div class="progress-bar ${usageClass}" style="width: ${Math.min(model.used_percent, 100)}%"></div></div>
-        ${resetTime ? `<div class="reset-time small"><span class="reset-time-icon">${icons.clock}</span>${t('resetsIn')} <span class="reset-time-value">${resetTime}</span></div>` : ''}
+        <div class="progress-track"><div class="progress-bar ${usageClass}" style="width: ${Math.min(remainingPercent, 100)}%"></div></div>
+        ${resetTime ? `<div class="reset-time"><span class="reset-time-icon">${icons.clock}</span>${t('resetsIn')} <span class="reset-time-value">${resetTime}</span></div>` : ''}
       </div>
     `;
   }
@@ -1193,8 +1269,8 @@ document.addEventListener("click", async (e) => {
   if (!btn) return;
   if (btn.id === "loginBtn" && !btn.hasAttribute("disabled")) login();
   if (btn.id === "logoutBtn") logout();
-  if (btn.id === "retryBtn") debouncedRefresh();
-  if (btn.id === "refreshBtn") debouncedRefresh();
+  if (btn.id === "retryBtn") refresh(true);  // Force backend refresh on retry
+  if (btn.id === "refreshBtn") refresh(true);  // Force backend refresh when user clicks refresh button
   if (btn.id === "settingsBtn") { settingsOpen = true; renderContent(); }
   if (btn.id === "closeSettingsBtn") { settingsOpen = false; renderContent(); }
 });
@@ -1222,8 +1298,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Debounced refresh to prevent rapid calls
-const debouncedRefresh = debounce(refresh, 300);
+// Debounced refresh to prevent rapid calls (removed - no longer used)
 
 // Initialize
 let refreshInterval: number | null = null;

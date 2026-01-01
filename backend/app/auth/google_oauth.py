@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PKCEPair:
     """PKCE challenge and verifier pair."""
+
     verifier: str
     challenge: str
 
@@ -35,6 +36,7 @@ class PKCEPair:
 @dataclass
 class AuthorizationFlow:
     """OAuth authorization flow data."""
+
     pkce: PKCEPair
     state: str
     url: str
@@ -45,6 +47,7 @@ class AuthorizationFlow:
 @dataclass
 class TokenData:
     """OAuth token data."""
+
     access_token: str
     refresh_token: str
     expires_at: int
@@ -95,8 +98,7 @@ class GoogleOAuth:
         """Create OAuth authorization flow with PKCE."""
         pkce = self._generate_pkce()
         state = oauth_state_manager.create_state(
-            add_new_account=add_new_account,
-            provider=self.PROVIDER
+            add_new_account=add_new_account, provider=self.PROVIDER
         )
 
         params = {
@@ -111,9 +113,7 @@ class GoogleOAuth:
             "prompt": "consent",
         }
 
-        url = f"{GOOGLE_AUTH_URL}?" + "&".join(
-            f"{k}={v}" for k, v in params.items()
-        )
+        url = f"{GOOGLE_AUTH_URL}?" + "&".join(f"{k}={v}" for k, v in params.items())
 
         flow = AuthorizationFlow(
             pkce=pkce,
@@ -131,19 +131,18 @@ class GoogleOAuth:
         """Exchange authorization code for tokens."""
         logger.debug("Google OAuth: Exchange code called")
 
-        state_data = oauth_state_manager.validate_state(state)
+        # Atomically validate AND consume state to prevent replay attacks (TOCTOU fix)
+        # Pass expected provider to ensure state is only consumed by the correct provider
+        state_data = oauth_state_manager.validate_and_consume(
+            state, expected_provider=self.PROVIDER
+        )
         if not state_data:
             logger.warning("Invalid or expired OAuth state")
             return None
 
-        # Check provider matches
-        if getattr(state_data, 'provider', None) != self.PROVIDER:
-            logger.debug(f"State provider mismatch: {getattr(state_data, 'provider', None)} != {self.PROVIDER}")
-            return None
-
         with self._flow_lock:
             self._cleanup_expired_flows_unsafe()
-            pending_flow = self._pending_flows.get(state)
+            pending_flow = self._pending_flows.pop(state, None)
 
         if not pending_flow:
             logger.warning("No pending flow for state")
@@ -172,12 +171,10 @@ class GoogleOAuth:
         except httpx.RequestError as e:
             logger.error(f"Network error during token exchange: {e}")
             return None
-        finally:
-            with self._flow_lock:
-                self._pending_flows.pop(state, None)
 
         if response.status_code != 200:
-            logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
+            # Redact sensitive response body - only log status code
+            logger.error(f"Token exchange failed: {response.status_code}")
             return None
 
         try:
@@ -214,7 +211,6 @@ class GoogleOAuth:
             if not save_result:
                 logger.error("Failed to save tokens")
 
-        oauth_state_manager.consume_state(state)
         return tokens
 
     async def refresh_tokens(self) -> Optional[TokenData]:
@@ -228,7 +224,7 @@ class GoogleOAuth:
 
         max_retries = 3
         response: Optional[httpx.Response] = None
-        
+
         for attempt in range(max_retries):
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:

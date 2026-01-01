@@ -39,7 +39,9 @@ class OAuthStateManager:
         self._secret = secrets.token_bytes(32)
         self._lock = threading.Lock()
 
-    def create_state(self, add_new_account: bool = False, provider: str = "openai") -> str:
+    def create_state(
+        self, add_new_account: bool = False, provider: str = "openai"
+    ) -> str:
         """Create a new cryptographically secure state token."""
         # Generate state with HMAC for integrity
         # IMPORTANT: Capture timestamp ONCE and use for both signing and storing
@@ -48,7 +50,9 @@ class OAuthStateManager:
         created_at = int(time.time())
         timestamp = str(created_at)
         message = f"{nonce}:{timestamp}".encode()
-        signature = hmac.new(self._secret, message, hashlib.sha256).hexdigest()[:STATE_SIGNATURE_LENGTH]
+        signature = hmac.new(self._secret, message, hashlib.sha256).hexdigest()[
+            :STATE_SIGNATURE_LENGTH
+        ]
         state = f"{nonce}:{signature}"
 
         with self._lock:
@@ -77,7 +81,11 @@ class OAuthStateManager:
         return state
 
     def validate_state(self, state: str) -> Optional[StateData]:
-        """Validate state token and return data if valid."""
+        """Validate state token and return data if valid.
+
+        Note: This method validates but does NOT consume the state.
+        For atomic validate-and-consume (recommended for callbacks), use validate_and_consume().
+        """
         if not state or ":" not in state:
             logger.warning("Invalid state format")
             return None
@@ -95,28 +103,98 @@ class OAuthStateManager:
                 del self._pending_states[state]
                 return None
 
-        # Verify HMAC integrity (outside lock for performance)
-        try:
-            nonce, signature = state.split(":")
-            timestamp = str(
-                state_data.created_at
-            )  # Already int, consistent with creation
-            message = f"{nonce}:{timestamp}".encode()
-            expected_sig = hmac.new(self._secret, message, hashlib.sha256).hexdigest()[
-                :STATE_SIGNATURE_LENGTH
-            ]
+            # Verify HMAC integrity INSIDE lock to prevent TOCTOU race
+            try:
+                nonce, signature = state.split(":")
+                timestamp = str(
+                    state_data.created_at
+                )  # Already int, consistent with creation
+                message = f"{nonce}:{timestamp}".encode()
+                expected_sig = hmac.new(
+                    self._secret, message, hashlib.sha256
+                ).hexdigest()[:STATE_SIGNATURE_LENGTH]
 
-            if not hmac.compare_digest(signature, expected_sig):
-                logger.warning("State signature mismatch")
+                if not hmac.compare_digest(signature, expected_sig):
+                    logger.warning("State signature mismatch")
+                    return None
+            except Exception as e:
+                logger.warning(f"State validation error: {e}")
                 return None
-        except Exception as e:
-            logger.warning(f"State validation error: {e}")
+
+            return state_data
+
+    def validate_and_consume(
+        self, state: str, expected_provider: Optional[str] = None
+    ) -> Optional[StateData]:
+        """Atomically validate and consume a state token.
+
+        This is the recommended method for OAuth callbacks to prevent replay attacks.
+        The state is validated and immediately consumed under a single lock, ensuring
+        that the same state cannot be used twice even under concurrent requests.
+
+        Args:
+            state: The state token to validate
+            expected_provider: If set, only consume state if provider matches
+
+        Returns:
+            StateData if valid and successfully consumed, None otherwise.
+        """
+        if not state or ":" not in state:
+            logger.warning("Invalid state format")
             return None
 
-        return state_data
+        with self._lock:
+            # Check if state exists
+            state_data = self._pending_states.get(state)
+            if not state_data:
+                logger.warning("Unknown OAuth state received")
+                return None
+
+            # Check expiration
+            if time.time() - state_data.created_at > OAUTH_STATE_EXPIRATION:
+                logger.warning("Expired OAuth state received")
+                del self._pending_states[state]
+                return None
+
+            # Verify HMAC integrity INSIDE lock to prevent TOCTOU race
+            try:
+                nonce, signature = state.split(":")
+                timestamp = str(state_data.created_at)
+                message = f"{nonce}:{timestamp}".encode()
+                expected_sig = hmac.new(
+                    self._secret, message, hashlib.sha256
+                ).hexdigest()[:STATE_SIGNATURE_LENGTH]
+
+                if not hmac.compare_digest(signature, expected_sig):
+                    logger.warning("State signature mismatch")
+                    return None
+            except Exception as e:
+                logger.warning(f"State validation error: {e}")
+                return None
+
+            # Check provider match if expected_provider is set
+            if (
+                expected_provider is not None
+                and state_data.provider != expected_provider
+            ):
+                logger.warning(
+                    f"Provider mismatch: expected {expected_provider}, got {state_data.provider}"
+                )
+                return None
+
+            # Atomically consume the state to prevent replay
+            del self._pending_states[state]
+            logger.debug(
+                f"OAuth state validated and consumed atomically for provider: {state_data.provider}"
+            )
+            return state_data
 
     def consume_state(self, state: str) -> bool:
-        """Consume (invalidate) a state token after successful use."""
+        """Consume (invalidate) a state token after successful use.
+
+        Note: Prefer validate_and_consume() for atomic operations in callbacks.
+        This method is kept for backward compatibility.
+        """
         with self._lock:
             if state in self._pending_states:
                 del self._pending_states[state]

@@ -92,6 +92,10 @@ interface Translations {
   accountAdded: string;
   settingsSaved: string;
   loading: string;
+  
+  // Usage labels
+  remaining: string;
+  used: string;
 }
 
 const translations: Record<Locale, Translations> = {
@@ -154,6 +158,8 @@ const translations: Record<Locale, Translations> = {
     accountAdded: 'Account added',
     settingsSaved: 'Settings saved',
     loading: 'Loading...',
+    remaining: 'remaining',
+    used: 'used',
   },
   ru: {
     appName: 'AICap',
@@ -214,6 +220,8 @@ const translations: Record<Locale, Translations> = {
     accountAdded: 'Аккаунт добавлен',
     settingsSaved: 'Настройки сохранены',
     loading: 'Загрузка...',
+    remaining: 'осталось',
+    used: 'использовано',
   },
 };
 

@@ -130,13 +130,27 @@ class AntigravityProvider:
         models = []
         models_data = data.get("models", {})
         
+        logger.debug(f"Parsing models response: {list(models_data.keys())}")
+        
         for model_name, model_info in models_data.items():
             # Only include gemini and claude models
             if not ("gemini" in model_name.lower() or "claude" in model_name.lower()):
                 continue
-                
+            
             quota_info = model_info.get("quotaInfo", {})
-            remaining = quota_info.get("remainingFraction", 1.0)
+            logger.debug(f"Model {model_name} quotaInfo: {quota_info}")
+            
+            # Get remaining fraction
+            # If remainingFraction is missing but resetTime exists = quota exhausted (0%)
+            # If no quotaInfo at all = assume full (1.0)
+            remaining = quota_info.get("remainingFraction")
+            if remaining is None:
+                if "resetTime" in quota_info:
+                    # Has reset time but no remaining = exhausted
+                    remaining = 0.0
+                else:
+                    # No quota info at all = unlimited/full
+                    remaining = 1.0
             
             # Parse reset time
             reset_time = None
@@ -249,6 +263,7 @@ class AntigravityProvider:
                     )
                 
                 data = response.json()
+                logger.info(f"Antigravity API full response: {data}")
                 models = self._parse_models_response(data)
                 
                 # Calculate aggregated usage (max used percent across all models)
